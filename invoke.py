@@ -34,5 +34,7 @@ if "error" in data:
 out = f"diagram-{mode}.drawio"
 with open(out, "w", encoding="utf-8") as f:
     f.write(data["xml"])
+with open(f"diagram-{mode}.md", "w", encoding="utf-8") as f:
+    f.write(data["explanation"])
 print(data["explanation"])
-print(f"\nSaved {out}  (session: {session_id})")
+print(f"\nSaved {out} + diagram-{mode}.md  (session: {session_id})")

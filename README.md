@@ -6,7 +6,8 @@ ported to a Strands agent running on Amazon Bedrock AgentCore Runtime.
 
 - `agent.py` – AgentCore entrypoint; returns `{"xml", "explanation", "mode"}`
 - `prompts/` – the original system prompts for the 3 modes: `aws`, `software-architecture`, `business-process`
-- `invoke.py` – client that calls the deployed runtime and writes a `.drawio` file
+- `invoke.py` – client that calls the deployed runtime and writes a `.drawio` file (+ `.md` explanation)
+- `to_html.py` – bundles `.drawio` files into one tabbed HTML page for demos (draw.io viewer, needs internet)
 
 ## Payload
 ```json
@@ -26,5 +27,6 @@ agentcore configure -e agent.py -n csp_architect_agent -r us-east-1 -rf requirem
 agentcore deploy                      # deploy / redeploy after changes
 python invoke.py "Serverless app with API GW, Lambda, DynamoDB" aws
 agentcore invoke '{"prompt": "3-tier web app on EC2 with RDS"}'
+pip install markdown && python to_html.py demo.html diagram-*.drawio --title "My Architectures"
 agentcore destroy                     # remove all AWS resources
 ```
