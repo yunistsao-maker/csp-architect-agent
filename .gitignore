@@ -8,3 +8,6 @@ __pycache__/
 *.drawio
 diagram-*.md
 *.html
+# Keep the committed samples
+!examples/*.drawio
+!examples/*.html

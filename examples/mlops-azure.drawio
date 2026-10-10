@@ -1,0 +1,146 @@
+<mxfile host="app.diagrams.net" version="21.6.5" type="device">
+  <diagram name="Azure MLOps" id="mlops">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1060" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="g1" value="1. Data Ingestion, Feature Engineering and Feature Store" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=10;fontStyle=1;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="1560" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="g2" value="2. Data Versioning, Training and Experiment Tracking (Azure ML Workspace, private endpoint)" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=10;fontStyle=1;fillColor=#e1d5e7;strokeColor=#9673a6;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="20" y="280" width="1560" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="g3" value="3. CI/CD for Models" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=10;fontStyle=1;fillColor=#fff2cc;strokeColor=#d6b656;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="20" y="530" width="790" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="g4" value="4. Inference (inside VNet)" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=10;fontStyle=1;fillColor=#d5e8d4;strokeColor=#82b366;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="830" y="530" width="750" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="g5" value="5. Monitoring and Automated Retraining Trigger" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=10;fontStyle=1;fillColor=#ffe6cc;strokeColor=#d79b00;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="20" y="810" width="990" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="g6" value="6. Security, Identity and Logging (applies to all tiers)" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=10;fontStyle=1;fillColor=#f8cecc;strokeColor=#b85450;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="810" width="550" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="src" value="Data Sources&lt;br&gt;(SQL, SaaS, files, IoT)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="105" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="adf" value="Data Factory&lt;br&gt;(batch ingest)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/databases/Data_Factory.svg;" vertex="1" parent="1">
+          <mxGeometry x="240" y="60" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="eh" value="Event Hubs&lt;br&gt;(streaming)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/analytics/Event_Hubs.svg;" vertex="1" parent="1">
+          <mxGeometry x="240" y="155" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="lake" value="ADLS Gen2 + Delta Lake&lt;br&gt;bronze / silver / gold" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/storage/Storage_Accounts.svg;" vertex="1" parent="1">
+          <mxGeometry x="480" y="105" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="dbx" value="Databricks&lt;br&gt;(feature engineering)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/analytics/Azure_Databricks.svg;" vertex="1" parent="1">
+          <mxGeometry x="740" y="105" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="fs" value="AML Managed Feature&lt;br&gt;Store (offline)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/ai_machine_learning/Machine_Learning.svg;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="105" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="redis" value="Online Store&lt;br&gt;(Redis, low latency)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/databases/Cache_Redis.svg;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="105" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="da" value="Versioned Data&lt;br&gt;Assets (v1, v2, ...)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/ai_machine_learning/Machine_Learning.svg;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="335" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="pipe" value="AML Pipeline&lt;br&gt;prep, train, evaluate" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=top;verticalAlign=bottom;image=img/lib/azure2/ai_machine_learning/Machine_Learning.svg;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="335" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="comp" value="Distributed Training&lt;br&gt;GPU cluster (DDP/Horovod)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/compute/VM_Scale_Sets.svg;" vertex="1" parent="1">
+          <mxGeometry x="840" y="335" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="trk" value="Experiment Tracking&lt;br&gt;(MLflow runs, metrics)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/ai_machine_learning/Machine_Learning.svg;" vertex="1" parent="1">
+          <mxGeometry x="620" y="335" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="reg" value="Model Registry&lt;br&gt;(versions, lineage)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/ai_machine_learning/Machine_Learning.svg;" vertex="1" parent="1">
+          <mxGeometry x="400" y="335" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="gate" value="Approval Gate&lt;br&gt;(metrics + manual)" style="rhombus;whiteSpace=wrap;html=1;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="170" y="325" width="130" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="devops" value="Azure DevOps&lt;br&gt;CI/CD pipelines&lt;br&gt;(build, test, deploy)" style="image;aspect=fixed;html=1;fontSize=10;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;image=img/lib/azure2/devops/Azure_DevOps.svg;" vertex="1" parent="1">
+          <mxGeometry x="100" y="620" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="acr" value="Container Registry&lt;br&gt;(scoring images)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/containers/Container_Registries.svg;" vertex="1" parent="1">
+          <mxGeometry x="340" y="620" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="stg" value="Staging endpoint tests&lt;br&gt;(smoke, load, shadow)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#ffffff;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="510" y="615" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="aks" value="AKS Real-time Inference&lt;br&gt;(blue/green, autoscale)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/containers/Kubernetes_Services.svg;" vertex="1" parent="1">
+          <mxGeometry x="860" y="585" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="apim" value="API Management&lt;br&gt;(auth, throttling)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/app_services/API_Management_Services.svg;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="585" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="cli" value="Apps / Clients" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/identity/Users.svg;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="585" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="batch" value="AML Batch Endpoint&lt;br&gt;(scheduled scoring)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/ai_machine_learning/Machine_Learning.svg;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="690" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="out" value="Batch Predictions&lt;br&gt;(ADLS)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/storage/Storage_Accounts.svg;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="690" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="fn" value="Azure Function&lt;br&gt;(retrain trigger)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/compute/Function_Apps.svg;" vertex="1" parent="1">
+          <mxGeometry x="40" y="875" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="eg" value="Event Grid&lt;br&gt;(drift / perf events)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/integration/Event_Grid_Topics.svg;" vertex="1" parent="1">
+          <mxGeometry x="320" y="875" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="mm" value="AML Model Monitoring&lt;br&gt;data drift, prediction drift,&lt;br&gt;performance" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/ai_machine_learning/Machine_Learning.svg;" vertex="1" parent="1">
+          <mxGeometry x="590" y="875" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="mon" value="Azure Monitor&lt;br&gt;+ App Insights&lt;br&gt;(latency, errors, alerts)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/management_governance/Monitor.svg;" vertex="1" parent="1">
+          <mxGeometry x="860" y="875" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="law" value="Log Analytics&lt;br&gt;Workspace&lt;br&gt;(central logs)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/analytics/Log_Analytics_Workspaces.svg;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="875" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="kv" value="Key Vault&lt;br&gt;(CMK, secrets)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/security/Key_Vaults.svg;" vertex="1" parent="1">
+          <mxGeometry x="1175" y="875" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="aad" value="Microsoft Entra ID&lt;br&gt;RBAC, Managed&lt;br&gt;Identities" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/identity/Azure_Active_Directory.svg;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="875" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="vnet" value="Virtual Network&lt;br&gt;+ NSGs&lt;br&gt;(no public access)" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/networking/Virtual_Networks.svg;" vertex="1" parent="1">
+          <mxGeometry x="1405" y="875" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="pl" value="Private Link&lt;br&gt;Private Endpoints" style="image;aspect=fixed;html=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/networking/Private_Link.svg;" vertex="1" parent="1">
+          <mxGeometry x="1510" y="875" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="src" target="adf"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="src" target="eh"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="adf" target="lake"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="eh" target="lake"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="lake" target="dbx"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="dbx" target="fs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" value="materialize" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="fs" target="redis"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" value="point-in-time training set" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="fs" target="da"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="da" target="pipe"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="pipe" target="comp"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e11" value="log runs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="comp" target="trk"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e12" value="register best" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="trk" target="reg"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="reg" target="gate"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e14" value="approved" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="gate" target="devops"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e15" value="build image" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="devops" target="acr"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="acr" target="stg"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e17" value="promote" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="stg" target="aks"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e18" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="stg" target="batch"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e19" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="cli" target="apim"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e20" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="apim" target="aks"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e21" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="batch" target="out"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e22" value="telemetry + captured data" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="aks" target="mon"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e23" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="mon" target="mm"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e24" value="drift / perf alert" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;" edge="1" parent="1" source="mm" target="eg"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e25" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;" edge="1" parent="1" source="eg" target="fn"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e26" value="start retrain" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=10;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fn" target="devops"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e27" value="submit retraining job" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;dashed=1;fontSize=10;exitX=0.85;exitY=0;exitDx=0;exitDy=0;strokeColor=#d79b00;" edge="1" parent="1" source="devops" target="pipe"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e28" value="diagnostics" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;dashed=1;fontSize=10;" edge="1" parent="1" source="mon" target="law"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
