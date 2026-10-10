@@ -13,7 +13,8 @@ ported to a Strands agent running on Amazon Bedrock AgentCore Runtime.
 {"prompt": "...", "mode": "aws", "language": "English", "enable_search": false}
 ```
 `enable_search` requires a `TAVILY_API_KEY` env var on the runtime. The model defaults to
-`us.anthropic.claude-sonnet-5-5` (override with `MODEL_ID`). If you reuse the same runtime session ID,
+`us.anthropic.claude-sonnet-5-5` (override with `MODEL_ID`), with `max_tokens` 64000
+(override with `MAX_TOKENS`). If you reuse the same runtime session ID,
 the agent keeps the conversation history, so a follow-up message can refine the previous diagram.
 
 ## Commands

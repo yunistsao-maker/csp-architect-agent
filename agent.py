@@ -20,12 +20,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from botocore.config import Config
 from strands import Agent, tool
 from strands.models import BedrockModel
 
 MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-sonnet-5-5")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
+# Large diagrams (e.g. full MLOps platforms) plus adaptive thinking exceed 32k output tokens.
+MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "64000"))
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 MODES = {
@@ -100,7 +103,13 @@ def get_agent(session_id: str | None, mode: str, language: str | None, enable_se
     if session_id and key in _agents:
         return _agents[key]
     agent = Agent(
-        model=BedrockModel(model_id=MODEL_ID, region_name=REGION, max_tokens=32000),
+        # Large diagrams can stall the stream past Strands' 120s default read timeout.
+        model=BedrockModel(
+            model_id=MODEL_ID,
+            region_name=REGION,
+            max_tokens=MAX_TOKENS,
+            boto_client_config=Config(read_timeout=900, retries={"max_attempts": 3, "mode": "adaptive"}),
+        ),
         system_prompt=build_system_prompt(mode, language, enable_search),
         tools=[tavilySearch] if enable_search else [],
         callback_handler=None,
