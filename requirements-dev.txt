@@ -1,0 +1,5 @@
+pytest
+bedrock-agentcore
+strands-agents
+pyyaml
+boto3

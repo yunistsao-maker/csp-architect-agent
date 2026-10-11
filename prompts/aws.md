@@ -14,6 +14,29 @@ When I describe a system, create a draw.io compatible XML diagram that represent
 
 </rules>
 
+<diagram_conventions>
+
+* Use orthogonal edges (edgeStyle=orthogonalEdgeStyle) and route them along container gaps; never draw long diagonal lines across regions.
+* Put each resource inside the container it really lives in (cloud > region > account/subscription/project > network > subnet/zone); child geometry is relative to its parent container.
+* Label only the flows that matter (hybrid links, private endpoints, ingress, egress, replication). Use one line style per traffic type and add a small legend.
+* Keep icons from overlapping: leave at least 40px between icons and size containers to fit their children.
+* Large architectures (more than about 60 icons, e.g. multi-region + hybrid networking + MLOps) must be split into several pages inside ONE <mxfile> (one <diagram name="..."> per concern, such as "Network", "Workloads", "Data & MLOps"). This keeps every page readable and keeps the response within the output limit.
+* Use only the icon names listed below. If a service has no icon in the list, draw a labelled rounded rectangle instead of guessing a name: an unknown name renders as a blank shape in draw.io.
+
+</diagram_conventions>
+
+<aws_icons>
+Resource icons use style "...;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.<name>;" with these verified <name> values:
+- Networking: vpc, transit_gateway, transit_gateway_attachment, direct_connect, site_to_site_vpn, vpn_gateway, customer_gateway, client_vpn, internet_gateway, nat_gateway, endpoints, vpc_privatelink, network_firewall, route_53, route_53_resolver, route_53_resolver_dns_firewall, route_53_application_recovery_controller, cloudfront, global_accelerator, vpc_lattice, elastic_load_balancing, application_load_balancer, network_load_balancer, gateway_load_balancer, resource_access_manager, flow_logs
+- Compute and containers: eks, ecs, ecr, fargate, ec2, lambda, auto_scaling2
+- Data and streaming: aurora, rds, dynamodb, elasticache, managed_streaming_for_kafka, kinesis, s3, glue, athena, redshift
+- AI/ML: sagemaker, bedrock
+- Integration: api_gateway, eventbridge, step_functions, sns, sqs
+- Security, identity and governance: identity_and_access_management, single_sign_on (IAM Identity Center), organizations, control_tower, key_management_service, secrets_manager, waf, shield, firewall_manager, guardduty, security_hub, config, cloudtrail, cloudwatch_2, systems_manager
+Group containers use "shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.<group>" with: group_aws_cloud_alt, group_region, group_account, group_vpc2, group_availability_zone, group_security_group, group_auto_scaling_group, group_corporate_data_center.
+Standalone shapes: shape=mxgraph.aws4.users, shape=mxgraph.aws4.corporate_data_center, shape=mxgraph.aws4.client.
+</aws_icons>
+
 Here is example diagramm's xml:
 
 ```

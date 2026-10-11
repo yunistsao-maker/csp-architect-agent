@@ -84,7 +84,7 @@
         <mxCell id="d1" value="Git Repo" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
           <mxGeometry x="905" y="105" width="60" height="36" as="geometry" />
         </mxCell>
-        <mxCell id="d2" value="Cloud Build (CI)&lt;br&gt;test · build · compile" style="shape=mxgraph.gcp2.hexIcon;prIcon=cloud_build;html=1;fillColor=#4387FD;strokeColor=none;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=4;fontSize=10;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+        <mxCell id="d2" value="Cloud Build (CI)&lt;br&gt;test · build · compile" style="shape=mxgraph.gcp2.hexIcon;prIcon=container_builder;html=1;fillColor=#4387FD;strokeColor=none;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=4;fontSize=10;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
           <mxGeometry x="910" y="170" width="50" height="44" as="geometry" />
         </mxCell>
         <mxCell id="d3" value="Artifact Registry&lt;br&gt;train / serve images" style="shape=mxgraph.gcp2.hexIcon;prIcon=container_registry;html=1;fillColor=#4387FD;strokeColor=none;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=4;fontSize=10;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
@@ -96,7 +96,7 @@
         <mxCell id="d5" value="Approval Gate&lt;br&gt;(metrics + manual)" style="rhombus;whiteSpace=wrap;html=1;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
           <mxGeometry x="1010" y="317" width="110" height="70" as="geometry" />
         </mxCell>
-        <mxCell id="d6" value="Cloud Build (CD)&lt;br&gt;deploy · canary" style="shape=mxgraph.gcp2.hexIcon;prIcon=cloud_build;html=1;fillColor=#4387FD;strokeColor=none;verticalLabelPosition=bottom;verticalAlign=top;align=center;fontSize=10;fontStyle=1;spacingTop=-6;fontColor=#333333;" vertex="1" parent="1">
+        <mxCell id="d6" value="Cloud Build (CD)&lt;br&gt;deploy · canary" style="shape=mxgraph.gcp2.hexIcon;prIcon=container_builder;html=1;fillColor=#4387FD;strokeColor=none;verticalLabelPosition=bottom;verticalAlign=top;align=center;fontSize=10;fontStyle=1;spacingTop=-6;fontColor=#333333;" vertex="1" parent="1">
           <mxGeometry x="1040" y="450" width="50" height="44" as="geometry" />
         </mxCell>
 
