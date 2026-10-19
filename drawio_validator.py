@@ -51,6 +51,9 @@ ALIASES = {
         "vpn_connection": "site_to_site_vpn",
         "tgw": "transit_gateway",
         "cloudwatch_logs": "cloudwatch_2",
+        # Used by the official aws-architecture-diagram skill; draw.io draws subnets with group_security_group.
+        "group_public_subnet": "group_security_group",
+        "group_private_subnet": "group_security_group",
     },
     "gcp2": {
         "kubernetes_engine": "container_engine",
