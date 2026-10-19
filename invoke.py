@@ -1,6 +1,6 @@
 """Call the deployed Diagram Generator agent and save the result as a .drawio file.
 
-Usage: python invoke.py "<description>" [aws|azure|gcp|software-architecture|business-process] [session-id] [-o NAME]
+Usage: python invoke.py "<description>" [aws|azure|gcp|software-architecture|business-process] [session-id] [-o NAME] [--skills]
 Reuse the same session-id to refine the previous diagram in a follow-up request.
 Output: NAME.drawio + NAME.md (default NAME: diagram-<mode>-<timestamp>, so runs never overwrite each other).
 """
@@ -21,6 +21,7 @@ ap.add_argument("mode", nargs="?", default="aws")
 ap.add_argument("session_id", nargs="?", default=None)
 ap.add_argument("-o", "--out", help="output name without extension")
 ap.add_argument("--language", help='e.g. "Traditional Chinese"')
+ap.add_argument("--skills", action="store_true", help="skills mode (aws/azure/gcp): load Agent Skills on demand")
 args = ap.parse_args()
 
 cfg = yaml.safe_load(open(".bedrock_agentcore.yaml"))
@@ -32,6 +33,8 @@ session_id = args.session_id or f"diagram-{uuid.uuid4()}"
 payload = {"prompt": args.prompt, "mode": args.mode}
 if args.language:
     payload["language"] = args.language
+if args.skills:
+    payload["skills"] = True
 
 client = boto3.client("bedrock-agentcore", region_name=region, config=Config(read_timeout=900))
 resp = client.invoke_agent_runtime(agentRuntimeArn=arn, runtimeSessionId=session_id, payload=json.dumps(payload))
@@ -58,3 +61,8 @@ print(f"Validation: {status} · {v.get('pages', '?')} page(s), {v.get('vertices'
       f" · {fixed} icon name(s) auto-fixed · {v.get('repair_turns', 0)} repair turn(s)")
 for e in v.get("errors", []) + [f"unknown icon {i['name']}" for i in v.get("icon_errors", [])]:
     print(f"  ! {e}")
+u = data.get("usage") or {}
+if u:
+    print(f"Usage: {'skills' if data.get('skills') else 'prompt'} mode · {u.get('input_tokens')} in / {u.get('output_tokens')} out tokens"
+          f" · {u.get('model_calls')} model call(s), {u.get('tool_calls')} tool call(s)"
+          + (f" · skills: {', '.join(u['skills_activated'])}" if u.get("skills_activated") else ""))
