@@ -82,3 +82,5 @@ pip install -r requirements-dev.txt && pytest -q   # offline tests, no AWS neede
 it in a browser to demo all three as tabs (GitHub shows HTML as source, not as a page).
 `examples/csp-agent-architecture.*` is this agent's own architecture (AgentCore Runtime, Strands, Bedrock,
 validation pipeline), drawn by the agent itself; open `csp-agent-architecture.html` the same way.
+
+![CSP Architect Agent architecture](examples/csp-agent-architecture.png)
