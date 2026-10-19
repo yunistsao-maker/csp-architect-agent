@@ -1,5 +1,5 @@
 pytest
 bedrock-agentcore
-strands-agents
+strands-agents>=1.59.0
 pyyaml
 boto3
