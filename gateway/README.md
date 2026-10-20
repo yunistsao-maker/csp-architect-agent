@@ -23,13 +23,14 @@ flowchart LR
     WS["web-search-tool<br/>built-in connector"]
     HK["postprocess-hook<br/>Lambda target"]
   end
-  S3[("S3 artifacts<br/>diagrams/ALIAS/...")]
+  S3[("S3 artifacts<br/>diagrams/ALIAS/...<br/>jobs/JOB_ID.json")]
   C -- "1 · USER_PASSWORD_AUTH" --> COG
   C -- "2 · HTTPS + Bearer JWT" --> E --> I1 --> T1
   T1 -- "3 · SigV4 (gateway role)<br/>X-Amzn-Bedrock-AgentCore-Runtime-Custom-User-Alias" --> R
   R -- "4 · SigV4 (runtime role)<br/>x-user-alias" --> I2
   I2 --> WS
   I2 --> HK --> S3
+  R -. "job state (runtime role)" .-> S3
 ```
 
 ## How a request flows
@@ -47,6 +48,51 @@ decides whether to call. It validates the diagram, fixes icon names, stores `.dr
 `s3://csp-arch-artifacts-ACCOUNT-REGION/diagrams/ALIAS/YYYY/MM/DD/`, and writes a JSON log line. The response
 gets `postprocess: {ok, artifact, alias, validation_ok}` and `caller: {alias}`. A hook failure is reported in
 `postprocess.error` and the diagram is still returned. Set `HOOK_REQUIRED=true` on the runtime to make it fatal.
+
+### Long-running requests: async jobs
+A gateway invocation ends after **15 minutes**, and a large strict-networking diagram (30–45k output tokens, plus
+thinking, a repair turn, web search and the hook) can take longer than that. So behind the gateway
+(`ASYNC_DEFAULT=true`) every request is a job:
+
+```mermaid
+sequenceDiagram
+  participant C as client.py (in VPC)
+  participant G as Ingress gateway
+  participant R as Runtime (session A)
+  participant R2 as Runtime (session B)
+  participant S as S3 jobs/
+  C->>G: {"prompt": ...} + JWT
+  G->>R: SigV4 + alias header
+  R->>S: put RUNNING (alias, request)
+  R-->>C: {"job_id", "status": "RUNNING", "poll_after_s": 15}   (~1 s)
+  Note over R: background thread, ping = HealthyBusy (up to 8 h)<br/>heartbeat to S3 every 60 s
+  loop every 15 s
+    C->>G: {"action": "status", "job_id"} + JWT
+    G->>R2: may be a different session / microVM
+    R2->>S: get jobs/JOB_ID.json, check alias = owner
+    R2-->>C: RUNNING · elapsed_s
+  end
+  R->>S: put SUCCEEDED + result (after the hook ran)
+  C->>G: status
+  G->>R2: SigV4 + alias header
+  R2-->>C: SUCCEEDED + xml, explanation, validation, postprocess
+```
+
+- **State is in S3, not memory.** A status call can reach a different runtime session than the one doing the
+  work, so job records live at `s3://csp-arch-artifacts-ACCOUNT-REGION/jobs/JOB_ID.json` and expire after 7 days.
+  The runtime role can only `GetObject`/`PutObject` under `jobs/`.
+- **Ownership.** The record stores the alias from the interceptor's header. A status call from any other alias
+  gets the same `not_found` answer as a missing job, so job ids can't be probed.
+- **Keeping the runtime alive.** The job registers with `app.add_async_task`, so `/ping` reports `HealthyBusy`
+  and the session is not reclaimed while it works, up to the 8-hour session limit.
+- **LOST jobs.** A running job refreshes `heartbeat_at` every 60 s (`JOB_HEARTBEAT_SECONDS`). If there is no
+  heartbeat for 5 minutes (`JOB_STALE_SECONDS`), for example because the microVM died, status returns
+  `LOST` / `job_lost` instead of `RUNNING` forever.
+- **Statuses:** `RUNNING`, `SUCCEEDED`, `FAILED` (`error_code`: `max_tokens`, `internal_error`, ...) and `LOST`. A
+  finished job carries exactly the fields of a synchronous response.
+- **Token lifetime.** `client.py` logs in again when the 60-minute access token is about to expire, so long
+  jobs keep polling. `--job JOB_ID` resumes polling later. `"async": false` / `--sync` still waits in one call,
+  but only for requests that finish in under 15 minutes.
 
 ### Why there are two gateways
 An AgentCore Runtime target (`http.agentcoreRuntime`) needs a gateway with no MCP protocol type, while Lambda and
@@ -91,6 +137,7 @@ host also needs to reach Cognito, through a NAT gateway or a `cognito-idp` inter
 export CSP_TEST_PASSWORD='...'                     # printed by deploy.py
 python gateway/client.py --all-checks              # security checks + one diagram
 python gateway/client.py "Hub-spoke vWAN with ExpressRoute and private AKS" --mode azure --search
+python gateway/client.py --job 3f2a9c...           # resume polling an earlier job
 ```
 
 `--all-checks` expects:
@@ -98,10 +145,11 @@ python gateway/client.py "Hub-spoke vWAN with ExpressRoute and private AKS" --mo
 | # | Check | Expected |
 |---|---|---|
 | 1 | Cognito login as `yhtsao` | access token with `username=yhtsao` |
-| 2 | Gateway call with the JWT | HTTP 200, `caller.alias == yhtsao`, `postprocess.ok`, the hook saw `yhtsao` |
+| 2 | Job submitted with the JWT, polled to the end | submit returns in ~1 s, then `SUCCEEDED`, `caller.alias == yhtsao`, `postprocess.ok`, the hook saw `yhtsao` |
 | 3 | No token | 401/403 |
 | 4 | Token with a forged signature | 401/403 |
 | 5 | Direct `InvokeAgentRuntime` with your IAM credentials | `AccessDenied` |
+| 6 | Status of a job id that isn't yours | `not_found` |
 
 Run the same call from outside the VPC (your laptop, say) and it should get 403 from the `aws:SourceVpce`
 policy.
@@ -129,10 +177,12 @@ account from this repo:
 2. **`metadataConfiguration` on the web-search connector target.** `deploy.py` falls back to creating the target
    without it. The interceptor log still records the alias for every search.
 3. **Runtime sessions through the gateway.** Session handling for runtime targets is not documented in detail.
-   Each gateway call may land in a new runtime session, so treat every call as stateless and don't rely on
-   follow-up refinements in this mode.
-4. **Limits.** A gateway invocation times out after 15 minutes and a tool call payload is limited to 6 MB. Very
-   large multi-page diagrams can come close to that.
+   Each gateway call may land in a new runtime session. Async jobs don't depend on it, because their state is in
+   S3, but follow-up refinements of the previous diagram (session history) shouldn't be relied on in this mode.
+   Also check that a session whose `/ping` says `HealthyBusy` stays alive after the gateway call that started it
+   has returned: watch for `LOST` jobs.
+4. **Limits.** Each gateway call is short now, so the 15-minute limit no longer applies to generation. The 6 MB
+   payload limit still applies to the status response that carries the finished diagram.
 5. **Alias claim.** Cognito access tokens carry `username`. For another IdP, set `ALIAS_CLAIMS` on the interceptor
    Lambda (default `alias,username,cognito:username,preferred_username`). Aliases must match
    `^[A-Za-z0-9._@-]{1,64}$`.
@@ -145,4 +195,5 @@ account from this repo:
 | `gateway/lambdas/postprocess/handler.py` | Post-processing hook: validate, fix icons, S3 artifact, audit log |
 | `gateway/schemas/runtime-openapi.yaml` | OpenAPI schema of the runtime target (`generateArchitecture`) |
 | `tools_gateway.py` | SigV4-signed MCP client the runtime uses for the tools gateway |
-| `tests/test_gateway_lambdas.py`, `test_tools_gateway.py`, `test_gateway_mode.py` | Offline tests (no AWS) |
+| `jobs.py` | Async job records (S3 / in-memory store), heartbeat, LOST detection |
+| `tests/test_gateway_lambdas.py`, `test_tools_gateway.py`, `test_gateway_mode.py`, `test_jobs.py`, `test_gateway_client.py` | Offline tests (no AWS) |

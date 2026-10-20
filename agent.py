@@ -6,8 +6,13 @@ Payload:
       "mode": "aws" | "azure" | "gcp" | "software-architecture" | "business-process",  # default "aws"
       "language": "English",                                                 # optional, default: match the user
       "enable_search": false,              # optional: web search via the tools gateway (TOOLS_GATEWAY_URL) or TAVILY_API_KEY
-      "skills": false                       # optional (aws/azure/gcp): load Agent Skills from skills/ instead of the
-    }                                       # per-mode prompt; default from USE_SKILLS
+      "skills": false,                      # optional (aws/azure/gcp): load Agent Skills from skills/ instead of the
+                                            # per-mode prompt; default from USE_SKILLS
+      "async": false                        # optional: submit a job and return {"job_id"} at once; default ASYNC_DEFAULT
+    }
+    Poll an async job with {"action": "status", "job_id": "..."}: status RUNNING | SUCCEEDED | FAILED | LOST, and a
+    finished job carries the same fields as a synchronous response. Only the caller alias that submitted a job can
+    read it.
 
 Response:
     {"xml": "<mxfile>...</mxfile>", "explanation": "...markdown...", "mode": "aws",
@@ -22,6 +27,7 @@ Known-wrong icon names are auto-corrected; anything else triggers up to MAX_REPA
 import json
 import os
 import re
+import threading
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +39,7 @@ from strands.models import BedrockModel
 from strands.types.exceptions import MaxTokensReachedException
 
 from drawio_validator import auto_fix_icons, repair_prompt, validate
+from jobs import JOB_ID_RE, Heartbeat, MemoryJobStore, S3JobStore, new_job_id, new_record, now, public_view
 from tools_gateway import ToolsGatewayClient, ToolsGatewayError, tool_json, tool_text
 
 MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-sonnet-5-5")
@@ -48,6 +55,13 @@ WEB_SEARCH_TARGET = os.environ.get("WEB_SEARCH_TARGET", "web-search-tool")
 HOOK_TARGET = os.environ.get("HOOK_TARGET", "postprocess-hook")
 HOOK_TOOL = os.environ.get("HOOK_TOOL", "process_architecture")
 HOOK_REQUIRED = os.environ.get("HOOK_REQUIRED", "false").lower() in ("1", "true", "yes")
+# Async jobs: AgentCore Gateway ends a call after 15 minutes, so in gateway mode a call submits a job and the
+# client polls {"action": "status", "job_id": ...}. Job state is in s3://JOB_BUCKET/jobs/ (in memory if unset).
+ASYNC_DEFAULT = os.environ.get("ASYNC_DEFAULT", "false").lower() in ("1", "true", "yes")
+JOB_BUCKET = os.environ.get("JOB_BUCKET")
+JOB_HEARTBEAT_SECONDS = float(os.environ.get("JOB_HEARTBEAT_SECONDS", "60"))
+JOB_STALE_SECONDS = float(os.environ.get("JOB_STALE_SECONDS", "300"))
+JOB_POLL_HINT_SECONDS = int(os.environ.get("JOB_POLL_HINT_SECONDS", "15"))
 # Large diagrams (e.g. full MLOps platforms) plus adaptive thinking exceed 32k output tokens.
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "64000"))
 # Extra model turns allowed to repair a diagram that fails validation after auto-fix (0 disables).
@@ -345,26 +359,24 @@ def run_postprocess_hook(result: dict, mode: str, alias: str | None, session_id:
     return merged
 
 
-@app.entrypoint
-def invoke(payload: dict, context=None) -> dict:
-    prompt = payload.get("prompt")
-    if not prompt:
+def _check_request(payload: dict) -> dict | None:
+    if not payload.get("prompt"):
         return {"error": "Missing 'prompt' in payload"}
     mode = payload.get("mode", "aws")
     if mode not in MODES:
         return {"error": f"Invalid mode '{mode}'. Use one of: {', '.join(MODES)}"}
-    alias = caller_alias(context)
-    if REQUIRE_CALLER_ALIAS and not alias:
-        return {"error": "Caller alias header missing; invoke this agent through the ingress gateway.",
-                "error_code": "forbidden"}
+    return None
+
+
+def generate(payload: dict, alias: str | None, session_id: str | None) -> dict:
+    """One diagram, end to end: agent turns, validation/repair, then the post-processing hook (gateway mode)."""
+    mode = payload.get("mode", "aws")
     enable_search = bool(payload.get("enable_search")) and bool(TOOLS_GATEWAY_URL or TAVILY_API_KEY)
     use_skills = bool(payload.get("skills", USE_SKILLS)) and mode in SKILL_FOR_MODE
-
-    session_id = getattr(context, "session_id", None) if context else None
     agent = get_agent(session_id, mode, payload.get("language"), enable_search, use_skills)
     agent.state.set("caller_alias", alias)  # always overwrite: a cached session agent must not keep an old alias
     try:
-        result = generate_validated(agent, prompt)
+        result = generate_validated(agent, payload["prompt"])
     except OutputTruncated:
         return {
             "error": (
@@ -374,10 +386,87 @@ def invoke(payload: dict, context=None) -> dict:
             ),
             "error_code": "max_tokens",
             "mode": mode,
+            "caller": {"alias": alias},
         }
     if TOOLS_GATEWAY_URL and result.get("xml"):
         result = run_postprocess_hook(result, mode, alias, session_id)
     return {**result, "mode": mode, "skills": use_skills, "caller": {"alias": alias}}
+
+
+# ------------------------------------------------------------------------------------------- async jobs
+_job_store = None
+
+
+def job_store():
+    global _job_store
+    if _job_store is None:
+        _job_store = S3JobStore(JOB_BUCKET) if JOB_BUCKET else MemoryJobStore()
+    return _job_store
+
+
+def spawn(fn, *args) -> None:
+    """Run fn in a background thread (tests replace this to run inline)."""
+    threading.Thread(target=fn, args=args, daemon=True).start()
+
+
+def run_job(record: dict, payload: dict, alias: str | None) -> None:
+    store = job_store()
+    task_id = app.add_async_task("diagram_job", {"job_id": record["job_id"]})  # ping -> HealthyBusy
+    try:
+        with Heartbeat(store, record, JOB_HEARTBEAT_SECONDS):
+            try:
+                result = generate(payload, alias, None)  # fresh agent: no history shared between jobs
+            except Exception as e:  # noqa: BLE001 - the job record must always reach a terminal state
+                result = {"error": f"{type(e).__name__}: {e}", "error_code": "internal_error",
+                          "caller": {"alias": alias}}
+        # Write the final state only after the heartbeat thread has stopped, so a late beat cannot overwrite it.
+        store.put({**record, "status": "FAILED" if result.get("error") else "SUCCEEDED", "updated_at": now(),
+                   "heartbeat_at": now(), "result": result})
+    finally:
+        app.complete_async_task(task_id)
+
+
+def submit_job(payload: dict, alias: str | None) -> dict:
+    mode = payload.get("mode", "aws")
+    request = {"mode": mode, "skills": bool(payload.get("skills", USE_SKILLS)) and mode in SKILL_FOR_MODE,
+               "enable_search": bool(payload.get("enable_search")), "language": payload.get("language"),
+               "prompt_chars": len(payload["prompt"])}
+    record = new_record(new_job_id(), alias, request)
+    job_store().put(record)
+    spawn(run_job, record, payload, alias)
+    return {"job_id": record["job_id"], "status": "RUNNING", "poll_after_s": JOB_POLL_HINT_SECONDS,
+            "mode": mode, "caller": {"alias": alias}}
+
+
+def job_status(job_id: str | None, alias: str | None) -> dict:
+    not_found = {"error": f"Job '{job_id}' not found.", "error_code": "not_found", "job_id": job_id}
+    if not job_id or not JOB_ID_RE.match(job_id):
+        return not_found
+    record = job_store().get(job_id)
+    # Only the caller who submitted the job can read it; anyone else gets the same answer as a missing job.
+    if record is None or record.get("alias") != alias:
+        return not_found
+    return {**public_view(record, JOB_STALE_SECONDS), "caller": {"alias": alias}}
+
+
+@app.entrypoint
+def invoke(payload: dict, context=None) -> dict:
+    alias = caller_alias(context)
+    if REQUIRE_CALLER_ALIAS and not alias:
+        return {"error": "Caller alias header missing; invoke this agent through the ingress gateway.",
+                "error_code": "forbidden"}
+    action = payload.get("action", "generate")
+    if action == "status":
+        return job_status(payload.get("job_id"), alias)
+    if action != "generate":
+        return {"error": f"Invalid action '{action}'. Use 'generate' or 'status'.", "error_code": "bad_request"}
+    problem = _check_request(payload)
+    if problem:
+        return problem
+    if bool(payload.get("async", ASYNC_DEFAULT)):
+        return submit_job(payload, alias)
+    session_id = getattr(context, "session_id", None) if context else None
+    return generate(payload, alias, session_id)
 
 
 if __name__ == "__main__":

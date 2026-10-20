@@ -9,7 +9,11 @@ paths:
   /:
     post:
       operationId: 'generateArchitecture'
-      summary: 'Generate a draw.io architecture diagram and explanation'
+      summary: 'Submit a diagram job (async, default behind the gateway), poll its status, or generate synchronously'
+      description: >
+        A gateway call ends after 15 minutes, so behind the gateway a generate call returns {job_id, status: RUNNING}
+        at once and the client polls {"action": "status", "job_id": ...} until SUCCEEDED, FAILED or LOST.
+        Only the alias that submitted a job can read it.
       requestBody:
         required: true
         content:
@@ -18,7 +22,7 @@ paths:
               $ref: '#/components/schemas/InvocationRequest'
       responses:
         '200':
-          description: 'Diagram, explanation, validation and post-processing result (or an error object)'
+          description: 'Job handle, job status, or (sync / finished job) diagram, explanation, validation and post-processing result; or an error object'
           content:
             application/json:
               schema:
@@ -31,11 +35,21 @@ components:
   schemas:
     InvocationRequest:
       type: object
-      required: [prompt]
       properties:
+        action:
+          type: string
+          enum: [generate, status]
+          default: generate
+        job_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          description: 'Required for action=status'
+        async:
+          type: boolean
+          description: 'Submit a job instead of waiting (default true behind the gateway)'
         prompt:
           type: string
-          description: 'Architecture description'
+          description: 'Architecture description (required for action=generate)'
         mode:
           type: string
           enum: [aws, azure, gcp, software-architecture, business-process]
@@ -48,6 +62,17 @@ components:
     InvocationResponse:
       type: object
       properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [RUNNING, SUCCEEDED, FAILED, LOST]
+        poll_after_s:
+          type: integer
+        elapsed_s:
+          type: number
+        request:
+          type: object
         xml:
           type: string
         explanation:

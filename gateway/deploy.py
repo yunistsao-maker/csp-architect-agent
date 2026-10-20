@@ -211,6 +211,9 @@ def deploy_lambdas(iam, lam, s3, state: dict, account: str, region: str) -> None
         "Resource": [f"arn:aws:s3:::{bucket}", f"arn:aws:s3:::{bucket}/*"],
         "Condition": {"Bool": {"aws:SecureTransport": "false"}}}]}))
 
+    s3.put_bucket_lifecycle_configuration(Bucket=bucket, LifecycleConfiguration={"Rules": [{
+        "ID": "expire-job-records", "Status": "Enabled", "Filter": {"Prefix": "jobs/"},
+        "Expiration": {"Days": 7}}]})
     role = ensure_role(iam, f"{PREFIX}-lambda-role",
                        {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "sts:AssumeRole",
                                                                  "Principal": {"Service": "lambda.amazonaws.com"}}]},
@@ -281,7 +284,9 @@ def update_runtime(iam, ctl, state: dict) -> None:
     kwargs = {k: current[k] for k in keep if current.get(k) is not None}
     env = dict(current.get("environmentVariables") or {})
     env.update(TOOLS_GATEWAY_URL=state["tools_gateway_url"], REQUIRE_CALLER_ALIAS="true",
-               WEB_SEARCH_TARGET=WEB_SEARCH_TARGET, HOOK_TARGET=HOOK_TARGET)
+               WEB_SEARCH_TARGET=WEB_SEARCH_TARGET, HOOK_TARGET=HOOK_TARGET,
+               # async jobs: a gateway call ends after 15 minutes, so submit + poll; job state in S3
+               ASYNC_DEFAULT="true", JOB_BUCKET=state["artifact_bucket"])
     headers = set((current.get("requestHeaderConfiguration") or {}).get("requestHeaderAllowlist", []))
     headers.add(USER_ALIAS_HEADER)
     ctl.update_agent_runtime(agentRuntimeId=runtime_id, environmentVariables=env,
@@ -289,10 +294,13 @@ def update_runtime(iam, ctl, state: dict) -> None:
     wait_ready(lambda: ctl.get_agent_runtime(agentRuntimeId=runtime_id), "runtime update")
     role_name = current["roleArn"].split("/")[-1]
     iam.put_role_policy(RoleName=role_name, PolicyName=f"{PREFIX}-invoke-tools-gateway", PolicyDocument=json.dumps({
-        "Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "bedrock-agentcore:InvokeGateway",
-                                                "Resource": state["tools_gateway_arn"]}]}))
+        "Version": "2012-10-17", "Statement": [
+            {"Effect": "Allow", "Action": "bedrock-agentcore:InvokeGateway", "Resource": state["tools_gateway_arn"]},
+            {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"],
+             "Resource": f"arn:aws:s3:::{state['artifact_bucket']}/jobs/*"}]}))
     state["runtime_role_arn"] = current["roleArn"]
-    print(f"  runtime {runtime_id}: header allowlist {sorted(headers)}, TOOLS_GATEWAY_URL set")
+    print(f"  runtime {runtime_id}: header allowlist {sorted(headers)}, TOOLS_GATEWAY_URL set, "
+          f"async jobs in s3://{state['artifact_bucket']}/jobs/")
 
 
 def deploy_ingress_gateway(iam, ctl, state: dict, account: str, region: str, allowed_aliases: list[str]) -> None:
@@ -460,7 +468,7 @@ def main():
         save_state(state)
     print(f"\n✔ Done. State: {STATE_FILE}")
     print(f"  Invoke URL: {state['ingress_gateway_url'].rstrip('/')}/{RUNTIME_TARGET}/invocations  (from inside {state.get('vpc_id', 'the VPC')})")
-    print("  Test:       python gateway/client.py --all-checks")
+    print("  Test:       python gateway/client.py --all-checks   (submits a job, then polls; each call is short)")
 
 
 if __name__ == "__main__":

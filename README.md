@@ -22,7 +22,8 @@ ported to a Strands agent running on Amazon Bedrock AgentCore Runtime.
 
 ## Payload
 ```json
-{"prompt": "...", "mode": "aws | azure | gcp | software-architecture | business-process", "language": "English", "enable_search": false}
+{"prompt": "...", "mode": "aws | azure | gcp | software-architecture | business-process", "language": "English", "enable_search": false, "async": false}
+{"action": "status", "job_id": "..."}      // poll an async job: RUNNING | SUCCEEDED | FAILED | LOST
 ```
 
 ## Diagram validation
@@ -87,7 +88,9 @@ python gateway/deploy.py --update-runtime-only     # after every `agentcore depl
 python gateway/client.py --all-checks              # from inside the VPC, as user yhtsao
 ```
 Runtime env vars set by `deploy.py`: `TOOLS_GATEWAY_URL`, `REQUIRE_CALLER_ALIAS=true`, `WEB_SEARCH_TARGET`,
-`HOOK_TARGET` (optional `HOOK_REQUIRED=true`). Details, the security checks and the verify list are in
+`HOOK_TARGET` (optional `HOOK_REQUIRED=true`), and `ASYNC_DEFAULT=true` + `JOB_BUCKET`. A gateway call ends after
+15 minutes, so every request becomes a job: `{"job_id"}` comes back at once, and the client polls
+`{"action": "status", "job_id": ...}`. Details, the security checks and the verify list are in
 [gateway/README.md](gateway/README.md).
 
 ## Examples
