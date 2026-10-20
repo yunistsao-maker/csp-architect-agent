@@ -122,3 +122,20 @@ def test_cached_session_agent_does_not_keep_previous_alias(gw_agent, monkeypatch
     gw_agent.invoke({"prompt": "y"}, ctx(None, session="same"))
     (agent,) = gw_agent._agents.values()
     assert agent.state.get("caller_alias") is None and FakeTools.instances[-1].alias is None
+
+
+def test_async_job_runs_hook_with_the_callers_alias(gw_agent, monkeypatch):
+    import jobs
+    monkeypatch.setattr(gw_agent, "_job_store", jobs.MemoryJobStore())
+    spawned = []
+    monkeypatch.setattr(gw_agent, "spawn", lambda fn, *a: spawned.append((fn, a)))
+    wire(gw_agent, monkeypatch, [{"text": f"```xml\n{GOOD}\n```"}],
+         hook_result={"alias": "yhtsao", "xml": HOOKED, "validation": {"ok": True}, "artifact": "s3://b/k.drawio"})
+    job_id = gw_agent.invoke({"prompt": "x", "async": True}, ctx("yhtsao"))["job_id"]
+    assert FakeTools.instances == []  # nothing called during submit
+    fn, a = spawned.pop()
+    fn(*a)
+    out = gw_agent.invoke({"action": "status", "job_id": job_id}, ctx("yhtsao", session="poll"))
+    assert out["status"] == "SUCCEEDED" and out["xml"] == HOOKED and out["postprocess"]["artifact"] == "s3://b/k.drawio"
+    assert FakeTools.instances[0].alias == "yhtsao"
+    assert gw_agent.invoke({"action": "status", "job_id": job_id}, ctx(None))["error_code"] == "forbidden"
