@@ -11,3 +11,8 @@ diagram-*.md
 # Keep the committed samples
 !examples/*.drawio
 !examples/*.html
+evals/results/
+# Gateway deployment state (account ID, ARNs, Cognito IDs) and client outputs
+gateway/.deploy-state.json
+gateway/.deploy-state.json.deleted
+gateway-diagram.md

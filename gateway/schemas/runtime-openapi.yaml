@@ -1,0 +1,98 @@
+openapi: '3.0.3'
+info:
+  title: 'CSP Architect Agent (AgentCore Runtime HTTP target)'
+  description: >
+    Request/response contract of agent.py, so the gateway policy engine can apply guardrails to the
+    AgentCore Runtime target. Clients call https://{gatewayId}.gateway.bedrock-agentcore.{region}.amazonaws.com/{targetName}/invocations
+  version: '1.0.0'
+paths:
+  /:
+    post:
+      operationId: 'generateArchitecture'
+      summary: 'Submit a diagram job (async, default behind the gateway), poll its status, or generate synchronously'
+      description: >
+        A gateway call ends after 15 minutes, so behind the gateway a generate call returns {job_id, status: RUNNING}
+        at once and the client polls {"action": "status", "job_id": ...} until SUCCEEDED, FAILED or LOST.
+        Only the alias that submitted a job can read it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvocationRequest'
+      responses:
+        '200':
+          description: 'Job handle, job status, or (sync / finished job) diagram, explanation, validation and post-processing result; or an error object'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvocationResponse'
+        '401':
+          description: 'Missing or invalid JWT'
+        '403':
+          description: 'Token has no alias claim, or the request did not come through the VPC endpoint'
+components:
+  schemas:
+    InvocationRequest:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [generate, status]
+          default: generate
+        job_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          description: 'Required for action=status'
+        async:
+          type: boolean
+          description: 'Submit a job instead of waiting (default true behind the gateway)'
+        prompt:
+          type: string
+          description: 'Architecture description (required for action=generate)'
+        mode:
+          type: string
+          enum: [aws, azure, gcp, software-architecture, business-process]
+        language:
+          type: string
+        skills:
+          type: boolean
+        enable_search:
+          type: boolean
+    InvocationResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [RUNNING, SUCCEEDED, FAILED, LOST]
+        poll_after_s:
+          type: integer
+        elapsed_s:
+          type: number
+        request:
+          type: object
+        xml:
+          type: string
+        explanation:
+          type: string
+        mode:
+          type: string
+        skills:
+          type: boolean
+        caller:
+          type: object
+          properties:
+            alias:
+              type: string
+        validation:
+          type: object
+        postprocess:
+          type: object
+        usage:
+          type: object
+        error:
+          type: string
+        error_code:
+          type: string
