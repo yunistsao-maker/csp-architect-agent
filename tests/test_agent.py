@@ -24,7 +24,8 @@ class StubAgent:
     instances: list = []
 
     def __init__(self, **kw):
-        self.kw, self.calls, self.messages = kw, [], []
+        from strands.agent.state import AgentState
+        self.kw, self.calls, self.messages, self.state = kw, [], [], AgentState()
         StubAgent.instances.append(self)
 
     def __call__(self, prompt):

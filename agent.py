@@ -5,7 +5,7 @@ Payload:
       "prompt": "Serverless web app with API Gateway, Lambda and DynamoDB",   # required
       "mode": "aws" | "azure" | "gcp" | "software-architecture" | "business-process",  # default "aws"
       "language": "English",                                                 # optional, default: match the user
-      "enable_search": false,                                                # optional, needs TAVILY_API_KEY
+      "enable_search": false,              # optional: web search via the tools gateway (TOOLS_GATEWAY_URL) or TAVILY_API_KEY
       "skills": false                       # optional (aws/azure/gcp): load Agent Skills from skills/ instead of the
     }                                       # per-mode prompt; default from USE_SKILLS
 
@@ -33,10 +33,21 @@ from strands.models import BedrockModel
 from strands.types.exceptions import MaxTokensReachedException
 
 from drawio_validator import auto_fix_icons, repair_prompt, validate
+from tools_gateway import ToolsGatewayClient, ToolsGatewayError, tool_json, tool_text
 
 MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-sonnet-5-5")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
+# Gateway mode (see gateway/README.md). The ingress gateway's interceptor puts the caller's alias in this header;
+# the runtime must allowlist it (requestHeaderConfiguration).
+USER_ALIAS_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Custom-User-Alias"
+REQUIRE_CALLER_ALIAS = os.environ.get("REQUIRE_CALLER_ALIAS", "false").lower() in ("1", "true", "yes")
+# Tools gateway (MCP, AWS_IAM inbound): web search connector + post-processing hook Lambda.
+TOOLS_GATEWAY_URL = os.environ.get("TOOLS_GATEWAY_URL")
+WEB_SEARCH_TARGET = os.environ.get("WEB_SEARCH_TARGET", "web-search-tool")
+HOOK_TARGET = os.environ.get("HOOK_TARGET", "postprocess-hook")
+HOOK_TOOL = os.environ.get("HOOK_TOOL", "process_architecture")
+HOOK_REQUIRED = os.environ.get("HOOK_REQUIRED", "false").lower() in ("1", "true", "yes")
 # Large diagrams (e.g. full MLOps platforms) plus adaptive thinking exceed 32k output tokens.
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "64000"))
 # Extra model turns allowed to repair a diagram that fails validation after auto-fix (0 disables).
@@ -92,6 +103,29 @@ def tavilySearch(query: str) -> str:
     return json.dumps({"answer": data.get("answer"), "results": results}, ensure_ascii=False)
 
 
+def make_tools_client(alias: str | None) -> ToolsGatewayClient:
+    """One client per request so the caller's alias header is never shared between users."""
+    return ToolsGatewayClient(TOOLS_GATEWAY_URL, REGION, alias)
+
+
+@tool(context=True)
+def web_search(query: str, tool_context) -> str:
+    """Search the web for up-to-date information (cloud service features, limits, regional availability).
+
+    Args:
+        query: The search query.
+    """
+    alias = tool_context.agent.state.get("caller_alias")
+    client = make_tools_client(alias)
+    try:
+        spec = client.find_tool(WEB_SEARCH_TARGET)
+        props = list((spec.get("inputSchema") or {}).get("properties", {}))
+        arg = "query" if "query" in props or not props else props[0]
+        return tool_text(client.call_tool(spec["name"], {arg: query}))[:20000]
+    except (ToolsGatewayError, OSError) as e:
+        return f"Web search failed: {e}"
+
+
 @tool
 def read_skill_file(skill_name: str, path: str) -> str:
     """Read one reference file of a skill, e.g. skill_name="aws-architecture-diagram", path="references/xml-rules.md".
@@ -125,6 +159,8 @@ def build_system_prompt(mode: str, language: str | None, enable_search: bool, us
         prompt = prompt.replace(LANG_LINE, f"Respond in the following languages: {language}.")
     if not enable_search:
         prompt = prompt.replace(SEARCH_LINE, "")
+    elif TOOLS_GATEWAY_URL:
+        prompt = prompt.replace("use the tavilySearch tool", "use the web_search tool")
     return prompt
 
 
@@ -167,7 +203,7 @@ def get_agent(session_id: str | None, mode: str, language: str | None, enable_se
     key = (session_id, mode, language, enable_search, use_skills)
     if session_id and key in _agents:
         return _agents[key]
-    tools = [tavilySearch] if enable_search else []
+    tools = [web_search if TOOLS_GATEWAY_URL else tavilySearch] if enable_search else []
     plugins = []
     if use_skills:
         tools.append(read_skill_file)
@@ -277,6 +313,38 @@ def generate_validated(agent: Agent, prompt: str, usage: dict | None = None) -> 
     return {"xml": xml, "explanation": out["explanation"], "validation": validation, "usage": usage}
 
 
+def caller_alias(context) -> str | None:
+    headers = getattr(context, "request_headers", None) or {}
+    for k, v in headers.items():
+        if k.lower() == USER_ALIAS_HEADER.lower():
+            return v
+    return None
+
+
+def run_postprocess_hook(result: dict, mode: str, alias: str | None, session_id: str | None) -> dict:
+    """Call the post-processing Lambda behind the tools gateway (IAM) and merge its output.
+
+    This is a deterministic hook after generation, not a tool the model chooses. The alias travels in the
+    x-user-alias header; the Lambda reads it from the gateway's propagated headers for logging.
+    """
+    v = result.get("validation") or {}
+    try:
+        client = make_tools_client(alias)
+        name = client.find_tool(HOOK_TARGET, HOOK_TOOL)["name"]
+        out = tool_json(client.call_tool(name, {
+            "xml": result["xml"], "explanation": result.get("explanation", ""), "mode": mode,
+            "session_id": session_id or "", "agent_validation_ok": bool(v.get("ok"))}))
+    except (ToolsGatewayError, OSError, ValueError, KeyError) as e:
+        if HOOK_REQUIRED:
+            raise
+        return {**result, "postprocess": {"ok": False, "error": f"{type(e).__name__}: {e}"}}
+    merged = {**result, "postprocess": {"ok": True, "artifact": out.get("artifact"), "alias": out.get("alias"),
+                                        "validation_ok": (out.get("validation") or {}).get("ok")}}
+    if out.get("xml"):
+        merged["xml"] = out["xml"]
+    return merged
+
+
 @app.entrypoint
 def invoke(payload: dict, context=None) -> dict:
     prompt = payload.get("prompt")
@@ -285,12 +353,16 @@ def invoke(payload: dict, context=None) -> dict:
     mode = payload.get("mode", "aws")
     if mode not in MODES:
         return {"error": f"Invalid mode '{mode}'. Use one of: {', '.join(MODES)}"}
-    enable_search = bool(payload.get("enable_search")) and bool(TAVILY_API_KEY)
-
+    alias = caller_alias(context)
+    if REQUIRE_CALLER_ALIAS and not alias:
+        return {"error": "Caller alias header missing; invoke this agent through the ingress gateway.",
+                "error_code": "forbidden"}
+    enable_search = bool(payload.get("enable_search")) and bool(TOOLS_GATEWAY_URL or TAVILY_API_KEY)
     use_skills = bool(payload.get("skills", USE_SKILLS)) and mode in SKILL_FOR_MODE
 
     session_id = getattr(context, "session_id", None) if context else None
     agent = get_agent(session_id, mode, payload.get("language"), enable_search, use_skills)
+    agent.state.set("caller_alias", alias)  # always overwrite: a cached session agent must not keep an old alias
     try:
         result = generate_validated(agent, prompt)
     except OutputTruncated:
@@ -303,7 +375,9 @@ def invoke(payload: dict, context=None) -> dict:
             "error_code": "max_tokens",
             "mode": mode,
         }
-    return {**result, "mode": mode, "skills": use_skills}
+    if TOOLS_GATEWAY_URL and result.get("xml"):
+        result = run_postprocess_hook(result, mode, alias, session_id)
+    return {**result, "mode": mode, "skills": use_skills, "caller": {"alias": alias}}
 
 
 if __name__ == "__main__":

@@ -1,0 +1,73 @@
+openapi: '3.0.3'
+info:
+  title: 'CSP Architect Agent (AgentCore Runtime HTTP target)'
+  description: >
+    Request/response contract of agent.py, so the gateway policy engine can apply guardrails to the
+    AgentCore Runtime target. Clients call https://{gatewayId}.gateway.bedrock-agentcore.{region}.amazonaws.com/{targetName}/invocations
+  version: '1.0.0'
+paths:
+  /:
+    post:
+      operationId: 'generateArchitecture'
+      summary: 'Generate a draw.io architecture diagram and explanation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvocationRequest'
+      responses:
+        '200':
+          description: 'Diagram, explanation, validation and post-processing result (or an error object)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvocationResponse'
+        '401':
+          description: 'Missing or invalid JWT'
+        '403':
+          description: 'Token has no alias claim, or the request did not come through the VPC endpoint'
+components:
+  schemas:
+    InvocationRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          description: 'Architecture description'
+        mode:
+          type: string
+          enum: [aws, azure, gcp, software-architecture, business-process]
+        language:
+          type: string
+        skills:
+          type: boolean
+        enable_search:
+          type: boolean
+    InvocationResponse:
+      type: object
+      properties:
+        xml:
+          type: string
+        explanation:
+          type: string
+        mode:
+          type: string
+        skills:
+          type: boolean
+        caller:
+          type: object
+          properties:
+            alias:
+              type: string
+        validation:
+          type: object
+        postprocess:
+          type: object
+        usage:
+          type: object
+        error:
+          type: string
+        error_code:
+          type: string
