@@ -11,3 +11,4 @@ diagram-*.md
 # Keep the committed samples
 !examples/*.drawio
 !examples/*.html
+evals/results/
