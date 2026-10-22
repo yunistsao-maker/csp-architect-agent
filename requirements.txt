@@ -1,3 +1,6 @@
 bedrock-agentcore
 # AgentSkills plugin + MaxTokensReachedException; 1.59.0 is the version tested
 strands-agents>=1.59.0
+# portal agents: document templates (doc_agent.py) and Terraform static checks (terraform_checks.py)
+pyyaml
+python-hcl2>=8.0

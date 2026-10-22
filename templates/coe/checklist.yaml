@@ -1,0 +1,23 @@
+# Cloud CoE review checklist. The COE agent's review mode must give every applicable item a status
+# (pass / partial / fail / n/a) with evidence from the document; findings reference these IDs.
+# applies_to: doc type IDs from templates.yaml ("all" = every type). severity: the default severity of a finding.
+domain: coe
+items:
+  - {id: GOV-01, area: Governance, applies_to: [all], severity: low, check: "Owner, version, date, reviewers and status are stated."}
+  - {id: ARC-01, area: Architecture, applies_to: [solution-design], severity: medium, check: "The architecture diagram, the component list and the text describe the same system."}
+  - {id: ARC-02, area: Architecture, applies_to: [solution-design], severity: medium, check: "The workload sits in landing-zone accounts per standard, with production separated from non-production."}
+  - {id: NET-01, area: Network, applies_to: [solution-design], severity: high, check: "No public ingress unless justified; private connectivity (DX / VPN / TGW / PrivateLink) is documented."}
+  - {id: NET-02, area: Network, applies_to: [solution-design], severity: high, check: "Internet egress is controlled (no direct NAT to the internet without inspection or proxy) or absent."}
+  - {id: NET-03, area: Network, applies_to: [solution-design], severity: medium, check: "CIDR ranges come from IPAM and do not overlap with on-prem or other VPCs."}
+  - {id: IAM-01, area: Identity, applies_to: [solution-design], severity: high, check: "People access through SSO; no IAM users or long-lived access keys."}
+  - {id: IAM-02, area: Identity, applies_to: [solution-design], severity: high, check: "Workload roles are least privilege; resource policies restrict cross-account and service access."}
+  - {id: DAT-01, area: Data, applies_to: [solution-design], severity: high, check: "Data is classified; encryption at rest uses KMS keys as the classification requires; TLS 1.2+ in transit."}
+  - {id: DAT-02, area: Data, applies_to: [solution-design], severity: medium, check: "Backup, retention and deletion are defined and match the data classification."}
+  - {id: RES-01, area: Resilience, applies_to: [solution-design], severity: high, check: "RTO / RPO are stated and the design (multi-AZ, DR strategy) can meet them; a DR test is planned."}
+  - {id: OPS-01, area: Operations, applies_to: [solution-design], severity: medium, check: "Central logging (CloudTrail, VPC flow logs, application logs), metrics and alerting are defined."}
+  - {id: OPS-02, area: Operations, applies_to: [solution-design], severity: medium, check: "Infrastructure is managed as code (Terraform) through change management; patching and vulnerability management are defined."}
+  - {id: COST-01, area: Cost, applies_to: [solution-design], severity: low, check: "A cost estimate with assumptions, mandatory tags and budget alarms are included."}
+  - {id: CMP-01, area: Compliance, applies_to: [solution-design], severity: high, check: "Applicable internal standards and regulations are mapped to design decisions."}
+  - {id: EXC-01, area: Exceptions, applies_to: [all], severity: high, check: "Every deviation from a standard is listed as an exception with compensating controls and an expiry."}
+  - {id: EXC-02, area: Exceptions, applies_to: [exception-request], severity: high, check: "Expiry is at most 12 months and the remediation plan has owners and dates."}
+  - {id: EXC-03, area: Exceptions, applies_to: [exception-request], severity: medium, check: "Compensating controls are concrete and verifiable; the risk rating is justified."}

@@ -100,8 +100,8 @@ def public_view(record: dict, stale_after: float, at: float | None = None) -> di
 class Heartbeat:
     """Refreshes heartbeat_at every `interval` seconds while the job runs."""
 
-    def __init__(self, store, record: dict, interval: float):
-        self.store, self.record, self.interval = store, record, interval
+    def __init__(self, store, record: dict, interval: float, on_beat=None):
+        self.store, self.record, self.interval, self.on_beat = store, record, interval, on_beat
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -109,6 +109,8 @@ class Heartbeat:
         while not self._stop.wait(self.interval):
             try:
                 self.store.put({**self.record, "heartbeat_at": now()})
+                if self.on_beat:
+                    self.on_beat()  # e.g. renew the session lock lease
             except Exception:  # noqa: BLE001 - a missed beat only matters if every beat fails
                 pass
 

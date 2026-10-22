@@ -1,0 +1,22 @@
+# Terraform standards for the Terraform agent. Replace with your platform team's standards.
+# The rules here are enforced by terraform_checks.py; `conventions` is given to the model as instructions.
+required_tags: [Owner, CostCenter, Environment, DataClassification]
+require_backend: true
+required_files: [versions.tf, variables.tf, outputs.tf, README.md]
+forbidden_resources:   # strictly private networks: waive in the file with "# tfcheck:allow TF008 <reason>"
+  aws_internet_gateway: "Internet gateways are not allowed in private workload VPCs; use the shared egress/inspection VPC."
+  aws_nat_gateway: "NAT gateways are not allowed in private workload VPCs; use VPC endpoints or the shared egress VPC."
+  aws_default_vpc: "Do not manage or use the default VPC."
+conventions: |
+  - Terraform >= 1.10 and the AWS provider pinned with "~> 6.0" in versions.tf (required_version + required_providers).
+  - Remote state: backend "s3" with encrypt = true and use_lockfile = true; bucket, key and region come from
+    -backend-config in CI, never hard-coded.
+  - provider "aws" uses default_tags with Owner, CostCenter, Environment and DataClassification from variables.
+  - Every variable has a type and a description; secrets are sensitive = true and come from Secrets Manager / SSM,
+    never from defaults. Provide terraform.tfvars.example, never terraform.tfvars.
+  - Private by default: no internet gateway, NAT gateway or public IPs; reach AWS services through VPC endpoints;
+    on-prem traffic goes through the Transit Gateway attachment. Security groups never allow 0.0.0.0/0 ingress.
+  - Encryption: S3 with public access block + SSE-KMS, RDS storage_encrypted, KMS keys with rotation, IMDSv2 only.
+  - Layout: one root module per environment folder (envs/<env>/) calling reusable modules (modules/<name>/);
+    for_each over count; snake_case names; outputs for every ID other modules need.
+  - README.md: purpose, inputs/outputs summary, how to run plan/apply through CI, and any tfcheck waivers.

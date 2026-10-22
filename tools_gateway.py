@@ -17,6 +17,9 @@ from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 
 ALIAS_HEADER = "x-user-alias"
+# Which portal agent is calling (set by agent code, not the model). The tools gateway interceptor uses it to allow
+# each agent only its own tools, e.g. only the Terraform agent may open PRs in the infrastructure repo.
+AGENT_HEADER = "x-agent-kind"
 PROTOCOL_VERSION = "2025-03-26"
 SIGNING_SERVICE = "bedrock-agentcore"
 
@@ -44,12 +47,13 @@ def parse_mcp_response(content_type: str, raw: bytes) -> dict:
 
 class ToolsGatewayClient:
     def __init__(self, url: str, region: str | None = None, alias: str | None = None,
-                 session: boto3.Session | None = None, timeout: int = 300, opener=None):
+                 session: boto3.Session | None = None, timeout: int = 300, opener=None, agent_kind: str | None = None):
         self.url = url.rstrip("/")
         if not self.url.endswith("/mcp"):
             self.url += "/mcp"
         self.region = region or os.environ.get("AWS_REGION", "us-east-1")
         self.alias = alias
+        self.agent_kind = agent_kind
         self.session = session or boto3.Session()
         self.timeout = timeout
         self._open = opener or urllib.request.urlopen
@@ -64,6 +68,8 @@ class ToolsGatewayClient:
                    "Mcp-Protocol-Version": PROTOCOL_VERSION}
         if self.alias:
             headers[ALIAS_HEADER] = self.alias
+        if self.agent_kind:
+            headers[AGENT_HEADER] = self.agent_kind
         if self._mcp_session:
             headers["Mcp-Session-Id"] = self._mcp_session
         creds = self.session.get_credentials().get_frozen_credentials()

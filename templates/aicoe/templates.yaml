@@ -1,0 +1,50 @@
+# AI Center of Excellence (AI CoE): document templates used by the AICOE agent to prepare and to review documents.
+# Replace these with your organisation's own templates and AI policy. The agent prompts AND the output validation
+# both read this file. See templates/coe/templates.yaml for the field meanings.
+domain: aicoe
+name: AI CoE
+default_language: Traditional Chinese
+output_dir: docs/aicoe
+references:
+  - "NIST AI Risk Management Framework 1.0 (Govern, Map, Measure, Manage)"
+  - "ISO/IEC 42001:2023 AI management system"
+  - "金融監督管理委員會「金融業運用人工智慧(AI)指引」(financial institutions; check for the current version)"
+  - "個人資料保護法 (Personal Data Protection Act)"
+
+doc_types:
+  use-case-assessment:
+    title: AI 應用案評估文件 (AI use case proposal and risk assessment)
+    purpose: >
+      Submitted to the AI CoE before an AI / generative AI use case is built. Reviewers check value, risk tier,
+      data, responsible AI controls, human oversight, evaluation and monitoring.
+    sections:
+      - {heading: "1. 文件資訊 Document control", required: true, guidance: "Owner, accountable executive, business unit, version, date, reviewers, status."}
+      - {heading: "2. 摘要 Executive summary", required: true, guidance: "The use case in a few sentences, expected value, proposed risk tier, key controls, decision requested."}
+      - {heading: "3. 業務問題與預期效益 Business problem and expected value", required: true, guidance: "Current process, pain points, measurable KPIs and targets."}
+      - {heading: "4. 使用者與影響對象 Users and affected parties", required: true, guidance: "Who uses it, who is affected by its outputs, internal vs customer-facing, scale."}
+      - {heading: "5. 解決方案設計 Solution design", required: true, guidance: "Model(s) with provider and version, hosting and Region, RAG / agents / tools, architecture and integrations."}
+      - {heading: "6. 資料 Data", required: true, guidance: "Sources, classification, personal data, legal basis / consent, minimisation, retention, cross-border transfer, whether the provider uses prompts for training."}
+      - {heading: "7. 風險分級 Risk classification", required: true, guidance: "Risk tier under the internal AI policy with rationale; high-risk triggers that apply."}
+      - {heading: "8. 負責任 AI 控制 Responsible AI controls", required: true, guidance: "Fairness, transparency and disclosure, explainability, privacy, security (prompt injection, tool misuse, data leakage), guardrails."}
+      - {heading: "9. 人類監督 Human oversight", required: true, guidance: "Human-in-the-loop points, escalation, override, proportionate to the risk tier."}
+      - {heading: "10. 評估計畫 Evaluation plan", required: true, guidance: "Metrics, test datasets, acceptance thresholds, red-teaming / safety testing."}
+      - {heading: "11. 監控與事件應變 Monitoring and incident response", required: true, guidance: "Quality / drift / abuse monitoring, logging, incident process, kill switch."}
+      - {heading: "12. 第三方與模型治理 Third-party and model governance", required: true, guidance: "Vendor terms, model cards, IP, model lifecycle and deprecation."}
+      - {heading: "13. 法遵對應 Compliance mapping", required: true, guidance: "Internal AI policy, regulations and frameworks (see references) mapped to controls."}
+      - {heading: "14. 上線計畫與核准 Rollout plan and approvals", required: false, guidance: "Pilot, phased rollout, approvers and status."}
+      - {heading: "15. 待確認事項 Open questions", required: true, guidance: "Everything the author still has to confirm. Never invent facts: list them here instead."}
+
+  model-change:
+    title: 模型上線或變更申請 (Model onboarding or change request)
+    purpose: >
+      Requests approval to introduce a model or change the model / version / prompts of an approved AI use case.
+    sections:
+      - {heading: "1. 文件資訊 Document control", required: true, guidance: "Use case reference, requester, version, date, approvers."}
+      - {heading: "2. 變更摘要 Change summary", required: true, guidance: "From → to (model, version, provider, prompts, tools), effective date."}
+      - {heading: "3. 變更理由 Reason for change", required: true, guidance: "Deprecation, quality, cost, latency or capability reasons."}
+      - {heading: "4. 影響分析 Impact analysis", required: true, guidance: "Effect on outputs, data flows, Region, cost, latency, users; whether the risk tier changes."}
+      - {heading: "5. 評估結果 Evaluation results", required: true, guidance: "Before / after on the agreed metrics and datasets; regressions found and how they were handled."}
+      - {heading: "6. 安全與防護重新測試 Safety and guardrail re-test", required: true, guidance: "Red-team / safety tests re-run on the new model and results."}
+      - {heading: "7. 回復計畫 Rollback plan", required: true, guidance: "How to roll back, how it was tested, and the trigger criteria."}
+      - {heading: "8. 核准 Approvals", required: true, guidance: "Approvers and status."}
+      - {heading: "9. 待確認事項 Open questions", required: true, guidance: "Unconfirmed facts."}

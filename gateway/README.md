@@ -1,5 +1,9 @@
 # Private gateway ingress (PrivateLink → AgentCore Gateway → Runtime)
 
+> The same ingress also serves the COE / AICOE document agents and the Terraform agent (one runtime and one gateway
+> target each), with DynamoDB sessions, 90-day uploads and the `git-pr` tool: see
+> [docs/portal-agents.md](../docs/portal-agents.md), `gateway/agents.yaml` and `gateway/portal_client.py`.
+
 This mode puts the CSP architect agent behind an AgentCore Gateway that is reachable only through a VPC interface
 endpoint. A user signs in with Cognito, and the JWT is checked once, at the gateway. Every hop after that uses IAM
 (SigV4 with a role). The runtime accepts calls only from the gateway's role. The user's login alias (for example
