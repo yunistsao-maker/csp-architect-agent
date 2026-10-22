@@ -96,6 +96,10 @@ def main():
         safe(f"table {state['session_table']}", ddb.delete_table, TableName=state["session_table"])
     print("  (security groups csp-arch-gateway-vpce / -runtime / -git-pr are left; delete them after the ENIs are gone)")
     if not args.keep_cognito and state.get("user_pool_id"):
+        users_file = STATE_FILE.with_name(".test-users.json")
+        if users_file.exists():
+            users_file.unlink()
+            print(f"  removed {users_file.name}")
         safe(f"user pool {state['user_pool_id']}", s.client("cognito-idp").delete_user_pool,
              UserPoolId=state["user_pool_id"])
     print("\nRuntime env vars / header allowlist were left in place; `agentcore deploy` resets them.")

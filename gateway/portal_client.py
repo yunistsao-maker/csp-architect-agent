@@ -2,7 +2,7 @@
 
 Run where the on-prem portal would run (on-prem host over DX, or inside the VPC). Authentication:
   - corporate IdP: export CSP_TOKEN=<access token JWT from your SSO>   (what the real portal sends)
-  - Cognito test pool from deploy.py: --user yhtsao, password in CSP_TEST_PASSWORD or prompted
+  - Cognito test pool from deploy.py: yhtsao + fake-user-01.. (--user), passwords from gateway/.test-users.json
 
     # COE: draft a solution design from a whiteboard photo, keep refining it in the same session, then open a PR
     python gateway/portal_client.py coe --doc-type solution-design --attach whiteboard.jpg --session pay-2026-001 \\
@@ -18,11 +18,11 @@ Run where the on-prem portal would run (on-prem host over DX, or inside the VPC)
     python gateway/portal_client.py terraform --architecture-job <csp job_id> --title payments-network \\
         "Implement the network layer only" --publish
 
-    python gateway/portal_client.py checks coe        # negative checks: foreign attachment, busy session, foreign job
+    python gateway/portal_client.py checks coe        # negative checks + cross-user isolation (yhtsao vs fake-user-01)
+    python gateway/portal_client.py coe --user fake-user-02 --doc-type exception-request "..."   # act as a fake user
 """
 
 import argparse
-import getpass
 import json
 import mimetypes
 import os
@@ -34,17 +34,16 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from client import STATE_FILE, call, check, claims, login  # noqa: E402
+from client import STATE_FILE, call, check, claims, login, test_password  # noqa: E402
 
 AGENTS = {"coe": "coe-doc", "aicoe": "aicoe-doc", "terraform": "terraform"}
 
 
 class Auth:
-    def __init__(self, state: dict, user: str | None):
+    def __init__(self, state: dict, user: str | None, static_ok: bool = True):
         self.state, self.user = state, user or state.get("test_user")
-        self.static = os.environ.get("CSP_TOKEN")
-        self.password = None if self.static else (os.environ.get("CSP_TEST_PASSWORD")
-                                                  or getpass.getpass(f"Password for {self.user}: "))
+        self.static = os.environ.get("CSP_TOKEN") if static_ok else None
+        self.password = None if self.static else test_password(self.user, primary=user is None)
         self.token = self.static or login(state, self.user, self.password)
 
     def fresh(self) -> str:
@@ -116,7 +115,33 @@ def publish(url: str, auth: Auth, job_id: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def negative_checks(url: str, auth: Auth) -> bool:
+def cross_user_checks(url: str, a: Auth, b: Auth) -> list[bool]:
+    """Two Cognito users (e.g. yhtsao and fake-user-01): nothing of A's is reachable for B."""
+    out = []
+    sid = f"xuser-{uuid.uuid4().hex[:12]}"
+    payload = {"prompt": "Say hello in one sentence.", "doc_type": "solution-design", "session_id": sid}
+    _, job_a = call(url, payload, a.fresh())
+    _, job_b = call(url, payload, b.fresh())  # same session_id while A's job is running
+    out.append(check(f"{b.user} gets their own session for the same session_id",
+                     isinstance(job_b, dict) and job_b.get("status") == "RUNNING", str(job_b)[:120]))
+    if isinstance(job_a, dict) and job_a.get("job_id"):
+        jid = job_a["job_id"]
+        _, d = call(url, {"action": "status", "job_id": jid}, b.fresh())
+        out.append(check(f"{b.user} cannot read {a.user}'s job", isinstance(d, dict) and d.get("error_code") == "not_found"))
+        wait(url, a, jid)
+        _, d = call(url, {"action": "publish", "job_id": jid}, b.fresh())
+        out.append(check(f"{b.user} cannot publish {a.user}'s job", isinstance(d, dict) and d.get("error_code") == "not_found"))
+    _, up = call(url, {"action": "upload_url", "filename": "a.png", "content_type": "image/png", "size": 100}, a.fresh())
+    if isinstance(up, dict) and up.get("key"):
+        _, d = call(url, {"prompt": "x", "doc_type": "solution-design", "attachments": [up["key"]]}, b.fresh())
+        out.append(check(f"{b.user} cannot attach {a.user}'s upload",
+                         isinstance(d, dict) and d.get("error_code") == "bad_request", str(d)[:120]))
+    if isinstance(job_b, dict) and job_b.get("job_id"):
+        wait(url, b, job_b["job_id"])
+    return out
+
+
+def negative_checks(url: str, auth: Auth, other: "Auth | None" = None) -> bool:
     alias = claims(auth.token).get("username") or claims(auth.token).get("preferred_username") or "x"
     results = []
     _, d = call(url, {"prompt": "x", "doc_type": "solution-design", "mode": "prepare",
@@ -136,6 +161,8 @@ def negative_checks(url: str, auth: Auth) -> bool:
     _, d = call(url, {"action": "upload_url", "filename": "x.exe", "content_type": "application/x-msdownload",
                       "size": 10}, auth.fresh())
     results.append(check("Executable uploads are refused", isinstance(d, dict) and d.get("error_code") == "bad_request"))
+    if other:
+        results += cross_user_checks(url, auth, other)
     print(f"\n{sum(results)}/{len(results)} checks passed")
     return all(results)
 
@@ -154,7 +181,8 @@ def main():
     ap.add_argument("--architecture-job", help="terraform: CSP architect job_id to implement")
     ap.add_argument("--job", help="publish: the job to publish")
     ap.add_argument("--publish", action="store_true", help="open a pull request when the job succeeds")
-    ap.add_argument("--user")
+    ap.add_argument("--user", help="Cognito test user (default: the primary user, yhtsao)")
+    ap.add_argument("--other-user", help="checks: second user for isolation checks (default: first fake user)")
     ap.add_argument("-o", "--out", type=Path, default=Path("portal-out"))
     args = ap.parse_args()
 
@@ -164,7 +192,10 @@ def main():
         agent = (args.rest or ["coe"])[0]
         url = url_for(state, agent)
         if args.command == "checks":
-            sys.exit(0 if negative_checks(url, auth) else 1)
+            fakes = [u for u in state.get("test_users", []) if u != auth.user]
+            other_user = args.other_user or (fakes[0] if fakes else None)
+            other = Auth(state, other_user, static_ok=False) if other_user else None
+            sys.exit(0 if negative_checks(url, auth, other) else 1)
         if not args.job:
             sys.exit("publish needs --job")
         sys.exit(0 if publish(url, auth, args.job).get("pull_request") else 1)

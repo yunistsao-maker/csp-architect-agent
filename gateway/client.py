@@ -1,7 +1,8 @@
 """Test the private, JWT-authenticated path to the CSP architect agent.
 
 Run from a host INSIDE the VPC that has the gateway endpoint (EC2, Cloud9, or a CloudShell VPC environment).
-Needs gateway/.deploy-state.json from gateway/deploy.py and the test user's password.
+Needs gateway/.deploy-state.json from gateway/deploy.py. Test-user passwords are read from CSP_TEST_PASSWORD, else from
+gateway/.test-users.json (written by deploy.py for yhtsao and the fake users), else prompted.
 
     python gateway/client.py "Hub-spoke vWAN with ExpressRoute and private AKS" --mode azure
     python gateway/client.py --all-checks          # positive + negative security checks
@@ -36,6 +37,15 @@ from urllib.parse import urlparse
 import boto3
 
 STATE_FILE = Path(__file__).resolve().parent / ".deploy-state.json"
+USERS_FILE = Path(__file__).resolve().parent / ".test-users.json"
+
+
+def test_password(user: str, primary: bool = True) -> str:
+    """CSP_TEST_PASSWORD (primary user only) -> gateway/.test-users.json -> prompt."""
+    if primary and os.environ.get("CSP_TEST_PASSWORD"):
+        return os.environ["CSP_TEST_PASSWORD"]
+    saved = json.loads(USERS_FILE.read_text()) if USERS_FILE.exists() else {}
+    return saved.get(user) or getpass.getpass(f"Password for {user}: ")
 
 
 def login(state: dict, user: str, password: str) -> str:
@@ -115,7 +125,7 @@ def main():
 
     state = json.loads(STATE_FILE.read_text())
     user = args.user or state["test_user"]
-    password = os.environ.get("CSP_TEST_PASSWORD") or getpass.getpass(f"Password for {user}: ")
+    password = test_password(user)
     url = invoke_url(state)
     print(f"Gateway invoke URL: {url}")
 

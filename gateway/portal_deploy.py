@@ -33,6 +33,8 @@ def load_config(path: Path = CONFIG_FILE) -> dict:
                and a.get("kind") not in (cfg.get("git") or {}).get("profiles", {})]
     if missing:
         raise ValueError(f"agents.yaml: {missing} use {GIT_TARGET} but have no git profile")
+    if cfg.get("git") and cfg["git"].get("network", "vpc") not in ("vpc", "public"):
+        raise ValueError("agents.yaml: git.network must be 'vpc' (internal Git over TGW / DX) or 'public' (github.com)")
     unknown = set((cfg.get("git") or {}).get("profiles", {})) - kinds
     if unknown:
         raise ValueError(f"agents.yaml: git profiles for unknown kinds {sorted(unknown)}")
@@ -163,27 +165,34 @@ def deploy_uploads_bucket(s3, state: dict, cfg: dict, account: str, region: str)
 
 def deploy_git_lambda(iam, lam, ec2, sm, state: dict, cfg: dict, account: str, subnet_ids: list[str], vpc_id: str,
                       ensure_role, ensure_lambda, zip_files) -> None:
+    """git-pr Lambda. network: vpc -> attached to the agent VPC (internal Git over TGW / DX, egress SG to the Git
+    CIDR only); network: public -> outside any VPC, for a github.com sandbox repository while there is no internal
+    Git to reach."""
     g = cfg["git"]
+    public = g.get("network", "vpc") == "public"
     secret = sm.describe_secret(SecretId=g["token_secret_name"])["ARN"]  # create the secret yourself (bot token)
-    try:
-        sg = ec2.create_security_group(GroupName=f"{PREFIX}-git-pr", VpcId=vpc_id,
-                                       Description="git-pr Lambda: HTTPS to the internal Git server and VPC endpoints")["GroupId"]
-        ec2.revoke_security_group_egress(GroupId=sg, IpPermissions=[{"IpProtocol": "-1", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}])
-        vpc_cidr = ec2.describe_vpcs(VpcIds=[vpc_id])["Vpcs"][0]["CidrBlock"]
-        ec2.authorize_security_group_egress(GroupId=sg, IpPermissions=[{
-            "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
-            "IpRanges": [{"CidrIp": c, "Description": "internal Git / VPC endpoints"} for c in [*g["egress_cidrs"], vpc_cidr]]}])
-    except ClientError as e:
-        if e.response["Error"]["Code"] != "InvalidGroup.Duplicate":
-            raise
-        sg = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [f"{PREFIX}-git-pr"]},
-                                                   {"Name": "vpc-id", "Values": [vpc_id]}])["SecurityGroups"][0]["GroupId"]
+    sg = None
+    if not public:
+        try:
+            sg = ec2.create_security_group(GroupName=f"{PREFIX}-git-pr", VpcId=vpc_id,
+                                           Description="git-pr Lambda: HTTPS to the internal Git server and VPC endpoints")["GroupId"]
+            ec2.revoke_security_group_egress(GroupId=sg, IpPermissions=[{"IpProtocol": "-1", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}])
+            vpc_cidr = ec2.describe_vpcs(VpcIds=[vpc_id])["Vpcs"][0]["CidrBlock"]
+            ec2.authorize_security_group_egress(GroupId=sg, IpPermissions=[{
+                "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
+                "IpRanges": [{"CidrIp": c, "Description": "internal Git / VPC endpoints"} for c in [*g["egress_cidrs"], vpc_cidr]]}])
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "InvalidGroup.Duplicate":
+                raise
+            sg = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [f"{PREFIX}-git-pr"]},
+                                                       {"Name": "vpc-id", "Values": [vpc_id]}])["SecurityGroups"][0]["GroupId"]
     role = ensure_role(iam, f"{PREFIX}-git-pr-role",
                        {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "sts:AssumeRole",
                                                                  "Principal": {"Service": "lambda.amazonaws.com"}}]},
                        {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "secretsmanager:GetSecretValue",
                                                                  "Resource": secret}]},
-                       ["arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"])
+                       ["arn:aws:iam::aws:policy/service-role/" + ("AWSLambdaBasicExecutionRole" if public
+                                                                   else "AWSLambdaVPCAccessExecutionRole")])
     files = {"handler.py": HERE / "lambdas/git_pr/handler.py"}
     if g.get("ca_bundle"):
         files[Path(g["ca_bundle"]).name] = ROOT / g["ca_bundle"]
@@ -191,10 +200,11 @@ def deploy_git_lambda(iam, lam, ec2, sm, state: dict, cfg: dict, account: str, s
     # caller identity (alias, agent kind) comes from the invocation's client context.
     state["git_pr_arn"] = ensure_lambda(lam, f"{PREFIX}-git-pr", role, zip_files(files), git_lambda_env(cfg, secret),
                                         account, timeout=60, memory=256, permission=False)
-    lam.update_function_configuration(FunctionName=f"{PREFIX}-git-pr",
-                                      VpcConfig={"SubnetIds": subnet_ids, "SecurityGroupIds": [sg]})
+    # empty lists detach a function that was VPC-attached before
+    vpc_config = {"SubnetIds": [], "SecurityGroupIds": []} if public else {"SubnetIds": subnet_ids, "SecurityGroupIds": [sg]}
+    lam.update_function_configuration(FunctionName=f"{PREFIX}-git-pr", VpcConfig=vpc_config)
     lam.get_waiter("function_updated_v2").wait(FunctionName=f"{PREFIX}-git-pr")
-    state["git_pr_sg"] = sg
+    state["git_pr_sg"], state["git_network"] = sg, "public" if public else "vpc"
 
 
 def git_target_config(state: dict) -> dict:
