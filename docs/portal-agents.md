@@ -7,8 +7,8 @@ ingress (PrivateLink → AgentCore Gateway, JWT from the corporate IdP, IAM insi
 | Agent | Target | What it does | Output |
 |---|---|---|---|
 | CSP architect | `/csp-architect` | prompt → draw.io architecture (existing) | `.drawio` + explanation |
-| **COE documents** | `/coe-doc` | **prepare** a Cloud CoE document from the template, or **review** one against the CoE checklist | `docs/coe/…md` / review report |
-| **AICOE documents** | `/aicoe-doc` | same for the AI CoE (AI use-case assessment, model change) | `docs/aicoe/…md` / review report |
+| **COE documents** | `/coe-doc` | **prepare** a Cloud CoE document from the template, **review** one against the CoE checklist, or **fill** one of the CoE's forms for a project | `docs/coe/…md` / review report / filled form |
+| **AICOE documents** | `/aicoe-doc` | same for the AI CoE (AI use-case assessment, model change, AI questionnaires) | `docs/aicoe/…md` / review report / filled form |
 | **Terraform** | `/terraform` | requirements, an uploaded diagram, or a CSP architect `job_id` → a Terraform module that passes the static checks | `terraform/<name>/…` |
 
 ![Network and security path](architecture/portal-agents-network.png)
@@ -27,6 +27,13 @@ The editable source is [architecture/portal-agents-architecture.drawio](architec
   repair turn and is not publishable until it passes. Replace the shipped defaults with your CoE's own templates.
 - **Unknowns are never invented.** Drafts mark missing facts as `【待確認】` and list them in `open_questions`. The
   portal can show these and send the answers as the next turn in the same session.
+- **Forms are filled, not judged.** `mode: "fill"` ([form_fill.py](../form_fill.py)) answers a questionnaire or
+  self-check list (Y* / Y / N / NA, single / multi choice, free text) from the project material the portal sends,
+  with a confidence (0-100), a basis and a reason for every answer, and a list of questions for what it can't
+  support. It never picks the compliant answer without evidence; veto (否決題) and high-risk items stay empty with a
+  question instead. The form comes in the payload (`form`: the portal's own form, or the answers so far) or as an
+  attached file the agent turns into items. The form and the project material go in the system prompt, so a
+  long session keeps only the conversation; follow-up turns return only the items they change.
 - **Terraform is checked here, proven in CI.** `terraform_checks.py` parses every file (python-hcl2) and enforces
   the baseline in `templates/terraform/standards.yaml`: pinned versions, S3 backend with locking, required
   default tags, no credentials (in any file), no 0.0.0.0/0 ingress (inline, `dynamic`, `aws_security_group_rule`), no
@@ -104,6 +111,18 @@ questions) is stored by `portal/sessions.py`, a Strands `SessionRepository` on o
 {"action": "upload_url", "filename": "board.jpg", "content_type": "image/jpeg", "size": 183422}
 {"action": "publish", "job_id": "...", "title"?: "...", "description"?: "..."}   // -> {"pull_request": {"url", ...}}
 ```
+Fill mode (COE / AICOE, no `doc_type`):
+```jsonc
+{"prompt": "開始填寫", "mode": "fill", "form"?: {"name", "title", "items": [{"id", "section", "q", "type", "options",
+  "other", "guide", "choices", "expect", "veto", "reject", "high_risk", "detail", ...answers}]},
+ "context"?: "PROJECT FILES ...", "attachments"?: ["uploads/..."], "language"?: "zh-TW", "session_id"?: "..."}
+// SUCCEEDED -> "form" (items with answer / selected / other_text / text, note, confidence, basis, exception),
+//              "updated" (ids changed this turn), "ask", "counts" (answered, veto, exception, schedule), "files"
+```
+`form` or an attached form file is required. With an unanswered `form`, every item gets a row; with an answered
+one, only the items the message affects change. The published file is the answers table: no fill-in instructions,
+no confidence.
+
 Terraform also takes `"architecture_job_id"`: the CSP architect job whose diagram (summarised to a component /
 connection list) should be implemented. Only the same alias's successful jobs can be used.
 

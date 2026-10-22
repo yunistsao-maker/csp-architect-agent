@@ -1,13 +1,17 @@
-"""COE / AICOE document agents: prepare a document from the organisation's template, or review one against its checklist.
+"""COE / AICOE document agents: prepare a document from the organisation's template, review one against its checklist,
+or fill in one of the organisation's forms (questionnaires, self-check lists) for a project (mode "fill", see
+form_fill.py).
 
 Templates and checklists live in templates/<domain>/templates.yaml and checklist.yaml. The same files drive the
 prompt and the validation, so a generated document must contain every required heading, and a review must give
 every applicable checklist item a status. Up to MAX_REPAIR_TURNS extra turns fix what validation finds.
 
 Payload (on top of the portal actions in portal/runtime.py):
-    {"prompt": "...", "mode": "prepare" | "review", "doc_type": "solution-design", "title"?: "...",
+    {"prompt": "...", "mode": "prepare" | "review" | "fill", "doc_type": "solution-design", "title"?: "...",
      "language"?: "Traditional Chinese", "document"?: "<markdown to review>", "attachments"?: [...],
      "session_id"?: "..."}    # same session_id = keep refining the same draft over several turns
+    fill: {"prompt", "mode": "fill", "form"?: {...}, "context"?: "...", "attachments"?, "language"?, "session_id"?}
+          (no doc_type; payload and result in form_fill.py)
 """
 
 import json
@@ -20,11 +24,12 @@ import yaml
 from strands import Agent
 from strands.models import BedrockModel
 
+import form_fill
 from portal.model import MAX_REPAIR_TURNS, OutputTruncated, make_model, new_usage, run_turn
 from portal.runtime import PortalAgentApp, RunContext, error
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
-MODES = ("prepare", "review")
+MODES = ("prepare", "review", "fill")
 VERDICTS = ("approve", "approve_with_conditions", "revise")
 STATUSES = ("pass", "partial", "fail", "n/a")
 SEVERITIES = ("high", "medium", "low")
@@ -228,6 +233,8 @@ def validate_payload(domain: str, payload: dict) -> dict | None:
     mode = payload.get("mode", "prepare")
     if mode not in MODES:
         return error(f"Invalid mode '{mode}'. Use one of: {', '.join(MODES)}", "bad_request")
+    if mode == "fill":
+        return form_fill.validate(payload)
     doc_type = payload.get("doc_type")
     if doc_type not in cfg["doc_types"]:
         return error(f"Invalid doc_type '{doc_type}'. Use one of: {', '.join(cfg['doc_types'])}", "bad_request")
@@ -239,6 +246,8 @@ def validate_payload(domain: str, payload: dict) -> dict | None:
 
 def run(domain: str, payload: dict, ctx: RunContext) -> dict:
     cfg = load_domain(domain)
+    if payload.get("mode") == "fill":
+        return form_fill.run(domain, cfg, payload, ctx, BedrockModel, slug)
     mode, doc_type = payload.get("mode", "prepare"), payload["doc_type"]
     agent = Agent(model=make_model(BedrockModel), agent_id=domain,
                   system_prompt=system_prompt(cfg, doc_type, mode, payload.get("language")),
