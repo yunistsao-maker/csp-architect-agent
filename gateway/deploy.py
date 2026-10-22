@@ -383,10 +383,8 @@ def deploy_ingress_gateway(iam, ctl, state: dict, account: str, region: str, all
                   targetConfiguration={"http": {"agentcoreRuntime": {
                       "arn": rt, "qualifier": "DEFAULT",
                       "schema": {"source": {"inlinePayload": (HERE / "schemas/runtime-openapi.yaml").read_text()}}}}},
-                  credentialProviderConfigurations=[{
-                      "credentialProviderType": "GATEWAY_IAM_ROLE",
-                      "credentialProvider": {"iamCredentialProvider": {"service": "bedrock-agentcore",
-                                                                       "region": region}}}],
+                  # runtime targets take the type only: an iamCredentialProvider block is rejected (MCP/OpenAPI only)
+                  credentialProviderConfigurations=[{"credentialProviderType": "GATEWAY_IAM_ROLE"}],
                   metadataConfiguration={"allowedRequestHeaders": [USER_ALIAS_HEADER]})
     for key, a in (state.get("agents") or {}).items():
         if a.get("portal"):
@@ -397,9 +395,7 @@ def deploy_ingress_gateway(iam, ctl, state: dict, account: str, region: str, all
 def runtime_target_config(arn: str, region: str, schema: str) -> dict:
     return {"targetConfiguration": {"http": {"agentcoreRuntime": {
                 "arn": arn, "qualifier": "DEFAULT", "schema": {"source": {"inlinePayload": (HERE / schema).read_text()}}}}},
-            "credentialProviderConfigurations": [{
-                "credentialProviderType": "GATEWAY_IAM_ROLE",
-                "credentialProvider": {"iamCredentialProvider": {"service": "bedrock-agentcore", "region": region}}}],
+            "credentialProviderConfigurations": [{"credentialProviderType": "GATEWAY_IAM_ROLE"}],
             "metadataConfiguration": {"allowedRequestHeaders": [USER_ALIAS_HEADER]}}
 
 
