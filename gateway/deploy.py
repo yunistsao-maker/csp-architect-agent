@@ -16,7 +16,6 @@ State is written to gateway/.deploy-state.json (used by gateway/client.py and ga
 """
 
 import argparse
-import getpass
 import io
 import json
 import secrets
@@ -174,8 +173,26 @@ def ensure_target(ctl, gateway_id: str, name: str, **kwargs) -> str:
 
 
 # ---------------------------------------------------------------------------------------------------- steps
-def deploy_cognito(cog, state: dict, alias: str, password: str | None) -> None:
-    step(f"Cognito user pool + app client + user '{alias}'")
+USERS_FILE = HERE / ".test-users.json"
+
+
+def fake_user_names(n: int) -> list[str]:
+    return [f"fake-user-{i:02d}" for i in range(1, n + 1)]
+
+
+def _password() -> str:
+    # meets the pool policy: 12+ chars with upper, lower, digit and symbol
+    return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16)) + "#9aA"
+
+
+def deploy_cognito(cog, state: dict, users: list[str], password: str | None = None, reset: bool = False,
+                   users_file: Path = USERS_FILE) -> dict:
+    """Test identity provider: a Cognito user pool whose access tokens carry `username` = the alias.
+
+    Creates every user in `users` (the first is the primary test user). Generated passwords go to
+    gateway/.test-users.json (mode 600, git-ignored), never to the console. `password` sets the first user's
+    password; `reset` regenerates everyone's."""
+    step(f"Cognito user pool + app client + test users: {', '.join(users)}")
     if "user_pool_id" not in state:
         pool = cog.create_user_pool(PoolName=f"{PREFIX}-users", Policies={"PasswordPolicy": {
             "MinimumLength": 12, "RequireUppercase": True, "RequireLowercase": True, "RequireNumbers": True,
@@ -187,20 +204,29 @@ def deploy_cognito(cog, state: dict, alias: str, password: str | None) -> None:
             UserPoolId=pool_id, ClientName=f"{PREFIX}-client", GenerateSecret=False,
             ExplicitAuthFlows=["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"],
             AccessTokenValidity=60, TokenValidityUnits={"AccessToken": "minutes"})["UserPoolClient"]["ClientId"]
-    try:
-        cog.admin_create_user(UserPoolId=pool_id, Username=alias, MessageAction="SUPPRESS")
-        created = True
-    except cog.exceptions.UsernameExistsException:
-        created = False
-    if created or password:
-        pw = password or "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(14)) + "#9aA"
-        cog.admin_set_user_password(UserPoolId=pool_id, Username=alias, Password=pw, Permanent=True)
-        if not password:
-            print(f"  generated password for {alias}: {pw}   (shown once; store it in your password manager)")
+    saved = json.loads(users_file.read_text()) if users_file.exists() else {}
+    for i, alias in enumerate(users):
+        try:
+            cog.admin_create_user(UserPoolId=pool_id, Username=alias, MessageAction="SUPPRESS",
+                                  UserAttributes=[{"Name": "name", "Value": f"Test user {alias}"}])
+            created = True
+        except cog.exceptions.UsernameExistsException:
+            created = False
+        pw = password if (i == 0 and password) else None
+        if pw or created or reset or alias not in saved:
+            pw = pw or _password()
+            cog.admin_set_user_password(UserPoolId=pool_id, Username=alias, Password=pw, Permanent=True)
+            saved[alias] = pw
+        print(f"  user {alias}: {'created' if created else 'exists'}")
+    users_file.touch(mode=0o600, exist_ok=True)
+    users_file.chmod(0o600)
+    users_file.write_text(json.dumps(saved, indent=1))
     state["discovery_url"] = (f"https://cognito-idp.{state['region']}.amazonaws.com/{pool_id}"
                               "/.well-known/openid-configuration")
-    state["test_user"] = alias
-    print(f"  user pool {pool_id}, client {state['client_id']}")
+    state["test_user"] = users[0]
+    state["test_users"] = list(dict.fromkeys([*state.get("test_users", []), *users]))
+    print(f"  user pool {pool_id}, client {state['client_id']}; passwords in {users_file} (mode 600)")
+    return saved
 
 
 def deploy_lambdas(iam, lam, s3, state: dict, account: str, region: str, acl: dict | None = None) -> None:
@@ -496,8 +522,12 @@ def main():
     ap.add_argument("--discovery-url", help="corporate IdP OIDC discovery URL (skips the Cognito test user pool)")
     ap.add_argument("--allowed-client", action="append", default=[], help="JWT client_id(s) to accept (repeatable)")
     ap.add_argument("--allowed-audience", action="append", default=[], help="JWT aud value(s) to accept (repeatable)")
-    ap.add_argument("--test-user", default="yhtsao", help="Cognito username = alias claim")
-    ap.add_argument("--password", help="set the test user's password (default: generate on first create)")
+    ap.add_argument("--test-user", action="append", default=[],
+                    help="Cognito username = alias claim (repeatable; default yhtsao). The first is the primary user")
+    ap.add_argument("--fake-users", type=int, default=2,
+                    help="also create N fake users fake-user-01.. for multi-user / isolation tests (default 2)")
+    ap.add_argument("--password", help="set the primary test user's password (default: generated)")
+    ap.add_argument("--reset-passwords", action="store_true", help="generate new passwords for all test users")
     ap.add_argument("--allowed-alias", action="append", default=[],
                     help="optional: gateway customClaims so only these usernames are accepted (repeatable)")
     ap.add_argument("--allow-invoke-principal", action="append", default=[],
@@ -549,9 +579,8 @@ def main():
             state.update(discovery_url=args.discovery_url, allowed_clients=args.allowed_client,
                          allowed_audience=args.allowed_audience)
         else:
-            password = args.password or (getpass.getpass(f"Password for {args.test_user} (blank = generate): ") or None
-                                         if sys.stdin.isatty() and "user_pool_id" not in state else None)
-            deploy_cognito(session.client("cognito-idp"), state, args.test_user, password)
+            users = list(dict.fromkeys((args.test_user or ["yhtsao"]) + fake_user_names(args.fake_users)))
+            deploy_cognito(session.client("cognito-idp"), state, users, args.password, args.reset_passwords)
             state.setdefault("allowed_clients", [state["client_id"]])
         save_state(state)
         deploy_lambdas(iam, session.client("lambda"), session.client("s3"), state, account, region, pd.tool_acl(cfg))
@@ -559,8 +588,9 @@ def main():
             step("Portal agents: session table (DynamoDB, TTL) + uploads bucket (S3, 90-day lifecycle)")
             pd.deploy_session_table(session.client("dynamodb"), state)
             pd.deploy_uploads_bucket(session.client("s3"), state, cfg, account, region)
-            if cfg.get("git") and not args.skip_vpc:
-                step("git-pr Lambda (VPC-attached; internal Git over TGW / DX; token from Secrets Manager)")
+            if cfg.get("git") and (cfg["git"].get("network") == "public" or not args.skip_vpc):
+                step("git-pr Lambda (" + ("public network: github.com sandbox" if cfg["git"].get("network") == "public"
+                                         else "VPC-attached: internal Git over TGW / DX") + "; token from Secrets Manager)")
                 pd.deploy_git_lambda(iam, session.client("lambda"), ec2, session.client("secretsmanager"), state, cfg,
                                      account, subnet_ids, vpc_id, ensure_role, ensure_lambda, zip_files)
         save_state(state)

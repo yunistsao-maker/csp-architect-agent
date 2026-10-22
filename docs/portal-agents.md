@@ -126,6 +126,33 @@ no confidence.
 Terraform also takes `"architecture_job_id"`: the CSP architect job whose diagram (summarised to a component /
 connection list) should be implemented. Only the same alias's successful jobs can be used.
 
+## Sandbox: before any corporate service is connected
+`gateway/agents.yaml` is the **sandbox** configuration, while `gateway/agents.enterprise.yaml` keeps the corporate
+IdP + internal Git setup:
+- **Users:** the Cognito test pool. `deploy.py` creates `yhtsao` plus fake users `fake-user-01`, `fake-user-02`
+  (`--fake-users N`, extra `--test-user NAME`). Their access tokens carry `username`, which becomes the alias.
+  Generated passwords go to `gateway/.test-users.json` (mode 600, git-ignored), not the console. Clients read them
+  from there.
+- **Git:** merge requests go to one private github.com repo, `yunistsao-maker/portal-agents-sandbox`, with a folder
+  per agent (`terraform/`, `docs/coe/`, `docs/aicoe/`). The git-pr Lambda runs outside the VPC
+  (`git.network: public`), because github.com is on the internet.
+- **Network:** there is no DX yet, so the quickest test is `--skip-vpc`. The gateway is then reachable from your
+  laptop, but still only with a valid Cognito JWT; runtimes stay in public network mode. Add the VPC / PrivateLink
+  pieces when the on-prem path exists.
+
+```bash
+# once: the sandbox repo (with a README, so main exists) and a fine-grained PAT for it only
+#   (Contents, Pull requests, Issues: read/write)
+gh repo create yunistsao-maker/portal-agents-sandbox --private --add-readme
+aws secretsmanager create-secret --name csp-arch/github-token --secret-string '<fine-grained PAT>'
+
+python gateway/deploy.py --skip-vpc                     # Cognito pool + yhtsao + fake-user-01/02, gateways, agents
+python gateway/portal_client.py coe --doc-type solution-design --session demo-0001 "支付閘道上雲的方案設計"
+python gateway/portal_client.py coe --user fake-user-01 --doc-type exception-request "例外申請：暫時開放 NAT"
+python gateway/portal_client.py publish coe --job <job_id>          # -> PR in portal-agents-sandbox
+python gateway/portal_client.py checks coe              # negative checks + yhtsao vs fake-user-01 isolation
+```
+
 ## Deploy
 ```bash
 # 1. one runtime per agent (VPC network mode is applied by deploy.py --runtime-vpc)

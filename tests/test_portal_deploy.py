@@ -68,7 +68,7 @@ def test_runtime_env_and_resource_policy():
 
 
 def test_git_lambda_env():
-    env = pd.git_lambda_env(pd.load_config(), "arn:secret")
+    env = pd.git_lambda_env(pd.load_config(ROOT / "gateway/agents.enterprise.yaml"), "arn:secret")
     assert env["GIT_PROVIDER"] == "gitlab" and "infra-live" in env["GIT_PROFILES"] and env["GIT_TOKEN_SECRET_ARN"] == "arn:secret"
 
 

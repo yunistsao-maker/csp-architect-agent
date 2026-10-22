@@ -1,0 +1,51 @@
+# ENTERPRISE configuration: corporate IdP + internal Git over TGW / DX (use with --agents-config).
+# Portal agents behind the ingress gateway (read by gateway/deploy.py).
+#
+# Each agent is its own AgentCore Runtime (its own IAM role, deploys and scaling), reachable only through the ingress
+# gateway at https://<gateway host>/<target>/invocations. Deploy each runtime first with `agentcore configure -e
+# <entrypoint> -n <agent_name> ...` + `agentcore deploy`; deploy.py finds the ARNs in .bedrock_agentcore.yaml by
+# agent_name (or pass --runtime <key>=<arn>).
+agents:
+  csp-architect:
+    agent_name: csp_architect_agent
+    entrypoint: agent.py
+    target: csp-architect
+    kind: null                     # sends no x-agent-kind header -> "_default" in the tool ACL
+    tools: [web-search-tool, postprocess-hook]
+  coe:
+    agent_name: coe_doc_agent
+    entrypoint: coe_agent.py
+    target: coe-doc
+    kind: coe
+    tools: [git-pr]
+  aicoe:
+    agent_name: aicoe_doc_agent
+    entrypoint: aicoe_agent.py
+    target: aicoe-doc
+    kind: aicoe
+    tools: [git-pr]
+  terraform:
+    agent_name: terraform_agent
+    entrypoint: terraform_agent.py
+    target: terraform
+    kind: terraform
+    tools: [web-search-tool, git-pr]
+
+# Internal Git server, reached privately from the git-pr Lambda (VPC -> TGW -> DX -> on-prem).
+git:
+  provider: gitlab                                   # gitlab | github (GitHub Enterprise Server)
+  api_url: https://gitlab.corp.example/api/v4        # GHES: https://ghe.corp.example/api/v3
+  token_secret_name: csp-arch/git-token              # Secrets Manager secret holding a project / bot token
+  network: vpc                                       # Lambda in the agent VPC; internal Git over TGW / DX
+  ca_bundle: null                                    # e.g. gateway/lambdas/git_pr/internal-ca.pem
+  egress_cidrs: [10.0.0.0/8]                         # on-prem range of the Git server (SG egress 443)
+  profiles:                                          # which repo each agent kind may write to, and where
+    terraform: {repo: platform/infra-live, base: main, path_prefix: terraform/, labels: [agent, terraform],
+                suffixes: [.tf, .md, .tfvars.example, .tftest.hcl, .json, .tpl, .yaml, .yml]}
+    coe:       {repo: ccoe/design-reviews, base: main, path_prefix: docs/coe/, labels: [agent, ccoe], suffixes: [.md]}
+    aicoe:     {repo: aicoe/use-cases, base: main, path_prefix: docs/aicoe/, labels: [agent, aicoe], suffixes: [.md]}
+
+retention:
+  session_ttl_days: 90      # DynamoDB TTL on conversation sessions
+  upload_days: 90           # S3 lifecycle on uploads/ (images, documents) and offloaded sessions/
+  job_days: 7               # S3 lifecycle on jobs/ (async job records)

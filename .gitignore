@@ -18,3 +18,4 @@ gateway/.deploy-state.json
 gateway/.deploy-state.json.deleted
 gateway-diagram.md
 portal-out/
+gateway/.test-users.json
