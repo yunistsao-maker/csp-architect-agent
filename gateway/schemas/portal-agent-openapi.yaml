@@ -1,0 +1,52 @@
+openapi: '3.0.3'
+info:
+  title: 'Portal agent (COE / AICOE documents, Terraform) - AgentCore Runtime HTTP target'
+  description: >
+    Shared contract of the portal agents (portal/runtime.py). Behind the gateway every generate call is an async job:
+    it returns {job_id} at once and the portal polls {"action": "status"}. Uploads go straight to S3 with a presigned
+    URL from {"action": "upload_url"}; finished jobs with files can be published as a pull request with
+    {"action": "publish"}. Only the caller alias that created a job, upload or session can use it.
+  version: '1.0.0'
+paths:
+  /:
+    post:
+      operationId: 'invokePortalAgent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Request'
+      responses:
+        '200':
+          description: 'Job handle, job status / result, upload URL, or pull request; or an error object'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: 'Missing or invalid JWT'
+        '403':
+          description: 'Token has no alias claim, or the request did not come through the VPC endpoint'
+components:
+  schemas:
+    Request:
+      type: object
+      properties:
+        action: {type: string, enum: [generate, status, upload_url, publish], default: generate}
+        prompt: {type: string}
+        mode: {type: string, description: 'Document agents: prepare | review'}
+        doc_type: {type: string, description: 'Document agents: a doc type from templates/<domain>/templates.yaml'}
+        document: {type: string, description: 'Document agents, review mode: the text to review'}
+        title: {type: string}
+        language: {type: string}
+        architecture_job_id: {type: string, pattern: '^[0-9a-f]{32}$', description: 'Terraform agent: CSP architect job to implement'}
+        session_id: {type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$'}
+        attachments: {type: array, items: {type: string}, description: 'Upload keys from upload_url'}
+        async: {type: boolean}
+        job_id: {type: string, pattern: '^[0-9a-f]{32}$'}
+        filename: {type: string}
+        content_type: {type: string}
+        size: {type: integer}
+        description: {type: string, description: 'publish: extra PR description'}

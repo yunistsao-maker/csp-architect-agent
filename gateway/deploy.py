@@ -30,6 +30,9 @@ import boto3
 import yaml
 from botocore.exceptions import ClientError
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import portal_deploy as pd  # noqa: E402  (gateway/portal_deploy.py: portal agents, sessions, uploads, git-pr)
+
 ROOT = Path(__file__).resolve().parents[1]
 HERE = Path(__file__).resolve().parent
 STATE_FILE = HERE / ".deploy-state.json"
@@ -96,7 +99,8 @@ def zip_files(files: dict[str, Path]) -> bytes:
     return buf.getvalue()
 
 
-def ensure_lambda(lam, name: str, role_arn: str, code: bytes, env: dict, account: str, timeout=60, memory=512) -> str:
+def ensure_lambda(lam, name: str, role_arn: str, code: bytes, env: dict, account: str, timeout=60, memory=512,
+                  permission: bool = True) -> str:
     try:
         arn = lam.create_function(FunctionName=name, Runtime="python3.12", Role=role_arn, Handler="handler.lambda_handler",
                                   Code={"ZipFile": code}, Timeout=timeout, MemorySize=memory,
@@ -111,6 +115,8 @@ def ensure_lambda(lam, name: str, role_arn: str, code: bytes, env: dict, account
         print(f"  updated function {name}")
     lam.get_waiter("function_active_v2").wait(FunctionName=name)
     lam.get_waiter("function_updated_v2").wait(FunctionName=name)
+    if not permission:
+        return arn
     try:
         lam.add_permission(FunctionName=name, StatementId="agentcore-gateway", Action="lambda:InvokeFunction",
                            Principal="bedrock-agentcore.amazonaws.com", SourceAccount=account)
@@ -155,8 +161,11 @@ def ensure_gateway(ctl, name: str, **kwargs) -> dict:
 
 def ensure_target(ctl, gateway_id: str, name: str, **kwargs) -> str:
     for t in ctl.list_gateway_targets(gatewayIdentifier=gateway_id, maxResults=50).get("items", []):
-        if t["name"] == name:
-            print(f"  target {name} exists: {t['targetId']}")
+        if t["name"] == name:  # re-apply the configuration so schema / header changes take effect
+            ctl.update_gateway_target(gatewayIdentifier=gateway_id, targetId=t["targetId"], name=name, **kwargs)
+            wait_ready(lambda: ctl.get_gateway_target(gatewayIdentifier=gateway_id, targetId=t["targetId"]),
+                       f"target {name}")
+            print(f"  target {name} updated: {t['targetId']}")
             return t["targetId"]
     target_id = ctl.create_gateway_target(gatewayIdentifier=gateway_id, name=name, **kwargs)["targetId"]
     print(f"  created target {name}: {target_id}")
@@ -194,7 +203,7 @@ def deploy_cognito(cog, state: dict, alias: str, password: str | None) -> None:
     print(f"  user pool {pool_id}, client {state['client_id']}")
 
 
-def deploy_lambdas(iam, lam, s3, state: dict, account: str, region: str) -> None:
+def deploy_lambdas(iam, lam, s3, state: dict, account: str, region: str, acl: dict | None = None) -> None:
     step("Artifact bucket + Lambda functions (alias interceptor, post-processing hook)")
     bucket = state.setdefault("artifact_bucket", f"{PREFIX}-artifacts-{account}-{region}")
     try:
@@ -223,7 +232,8 @@ def deploy_lambdas(iam, lam, s3, state: dict, account: str, region: str) -> None
     state["interceptor_arn"] = ensure_lambda(
         lam, f"{PREFIX}-alias-interceptor", role,
         zip_files({"handler.py": HERE / "lambdas/alias_interceptor/handler.py"}),
-        {"ALIAS_CLAIMS": "alias,username,cognito:username,preferred_username", "REQUIRE_ALIAS": "true"},
+        {"ALIAS_CLAIMS": "alias,username,cognito:username,preferred_username,upn", "REQUIRE_ALIAS": "true",
+         **({"TOOL_ACL": json.dumps(acl, separators=(",", ":"))} if acl else {})},
         account, timeout=10, memory=256)
     state["hook_arn"] = ensure_lambda(
         lam, f"{PREFIX}-postprocess-hook", role,
@@ -237,7 +247,7 @@ def deploy_tools_gateway(iam, ctl, state: dict, account: str, region: str) -> No
     step("Tools gateway (MCP, AWS_IAM inbound): web-search connector + post-processing hook")
     policy = {"Version": "2012-10-17", "Statement": [
         {"Effect": "Allow", "Action": "lambda:InvokeFunction",
-         "Resource": [state["interceptor_arn"], state["hook_arn"]]},
+         "Resource": [state["interceptor_arn"], state["hook_arn"], *([state["git_pr_arn"]] if state.get("git_pr_arn") else [])]},
         {"Effect": "Allow", "Action": "bedrock-agentcore:InvokeWebSearch",
          "Resource": f"arn:aws:bedrock-agentcore:{region}:aws:tool/web-search.v1"},
         {"Effect": "Allow", "Action": "bedrock-agentcore:InvokeGateway",
@@ -272,6 +282,15 @@ def deploy_tools_gateway(iam, ctl, state: dict, account: str, region: str) -> No
                               "xml": {"type": "string"}, "explanation": {"type": "string"},
                               "mode": {"type": "string"}, "session_id": {"type": "string"},
                               "agent_validation_ok": {"type": "boolean"}}}}]}}}})
+    if state.get("git_pr_arn"):
+        try:  # only this gateway may invoke git-pr (it trusts the client context for alias / agent kind)
+            boto3.client("lambda", region_name=region).add_permission(
+                FunctionName=state["git_pr_arn"], StatementId="tools-gateway-only", Action="lambda:InvokeFunction",
+                Principal="bedrock-agentcore.amazonaws.com", SourceArn=gw["gatewayArn"], SourceAccount=account)
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ResourceConflictException":
+                raise
+        ensure_target(ctl, gw["gatewayId"], pd.GIT_TARGET, **pd.git_target_config(state))
 
 
 def update_runtime(iam, ctl, state: dict) -> None:
@@ -306,12 +325,19 @@ def update_runtime(iam, ctl, state: dict) -> None:
 def deploy_ingress_gateway(iam, ctl, state: dict, account: str, region: str, allowed_aliases: list[str]) -> None:
     step("Ingress gateway (CUSTOM_JWT) + interceptor + AgentCore Runtime target (GATEWAY_IAM_ROLE)")
     rt = state["runtime_arn"]
+    runtimes = all_runtime_arns(state)
     role = ensure_role(iam, f"{PREFIX}-ingress-gw-role", trust_policy(account, region, None), {
         "Version": "2012-10-17", "Statement": [
             {"Effect": "Allow", "Action": "lambda:InvokeFunction", "Resource": state["interceptor_arn"]},
             {"Effect": "Allow", "Action": "bedrock-agentcore:InvokeAgentRuntime",
-             "Resource": [rt, f"{rt}/runtime-endpoint/*"]}]})
-    jwt = {"discoveryUrl": state["discovery_url"], "allowedClients": [state["client_id"]]}
+             "Resource": [r for a in runtimes for r in (a, f"{a}/runtime-endpoint/*")]}]})
+    jwt = {"discoveryUrl": state["discovery_url"]}
+    if state.get("allowed_clients"):
+        jwt["allowedClients"] = state["allowed_clients"]
+    if state.get("allowed_audience"):
+        jwt["allowedAudience"] = state["allowed_audience"]
+    if len(jwt) == 1:
+        sys.exit("The JWT authorizer needs --allowed-client and/or --allowed-audience")
     if allowed_aliases:  # optional: only these Cognito usernames may call the gateway at all
         jwt["customClaims"] = [{"inboundTokenClaimName": "username", "inboundTokenClaimValueType": "STRING",
                                 "authorizingClaimMatchValue": {"claimMatchOperator": "EQUALS",
@@ -336,41 +362,66 @@ def deploy_ingress_gateway(iam, ctl, state: dict, account: str, region: str, all
                       "credentialProvider": {"iamCredentialProvider": {"service": "bedrock-agentcore",
                                                                        "region": region}}}],
                   metadataConfiguration={"allowedRequestHeaders": [USER_ALIAS_HEADER]})
+    for key, a in (state.get("agents") or {}).items():
+        if a.get("portal"):
+            ensure_target(ctl, gw["gatewayId"], a["target"], **runtime_target_config(a["runtime_arn"], region,
+                                                                                   "schemas/portal-agent-openapi.yaml"))
+
+
+def runtime_target_config(arn: str, region: str, schema: str) -> dict:
+    return {"targetConfiguration": {"http": {"agentcoreRuntime": {
+                "arn": arn, "qualifier": "DEFAULT", "schema": {"source": {"inlinePayload": (HERE / schema).read_text()}}}}},
+            "credentialProviderConfigurations": [{
+                "credentialProviderType": "GATEWAY_IAM_ROLE",
+                "credentialProvider": {"iamCredentialProvider": {"service": "bedrock-agentcore", "region": region}}}],
+            "metadataConfiguration": {"allowedRequestHeaders": [USER_ALIAS_HEADER]}}
+
+
+def all_runtime_arns(state: dict) -> list[str]:
+    arns = [state["runtime_arn"], *[a["runtime_arn"] for a in (state.get("agents") or {}).values()]]
+    return list(dict.fromkeys(arns))
 
 
 def harden_runtime(ctl, state: dict, extra_principals: list[str]) -> None:
-    step("Runtime resource policy: only the ingress gateway role may invoke (explicit Deny for everyone else)")
-    rt = state["runtime_arn"]
+    step("Runtime resource policies: only the ingress gateway role may invoke (explicit Deny for everyone else)")
     allowed = [state["ingress_role_arn"], *extra_principals]
-    for resource in (rt, f"{rt}/runtime-endpoint/DEFAULT"):
-        policy = {"Version": "2012-10-17", "Statement": [
-            {"Sid": "AllowOnlyIngressGatewayRole", "Effect": "Allow", "Principal": {"AWS": allowed},
-             "Action": "bedrock-agentcore:InvokeAgentRuntime", "Resource": resource},
-            {"Sid": "DenyEveryoneElse", "Effect": "Deny", "Principal": {"AWS": "*"},
-             "Action": "bedrock-agentcore:InvokeAgentRuntime", "Resource": resource,
-             "Condition": {"ArnNotEquals": {"aws:PrincipalArn": allowed}}}]}
+    for resource in [r for rt in all_runtime_arns(state) for r in (rt, f"{rt}/runtime-endpoint/DEFAULT")]:
+        policy = pd.runtime_resource_policy(resource, allowed)
         try:
             ctl.put_resource_policy(resourceArn=resource, policy=json.dumps(policy))
             print(f"  policy set on {resource}")
+        except ClientError as e:  # fail closed: without it any IAM principal could call the runtime directly
+            sys.exit(f"Could not set the resource policy on {resource}: {e.response['Error']['Message']}")
+
+
+def endpoint_security_group(ec2, vpc_id: str, client_cidrs: list[str]) -> str:
+    """HTTPS into the endpoint ENIs from the VPC (runtimes, Lambda) and from on-prem clients (portal over DX/TGW)."""
+    cidr = ec2.describe_vpcs(VpcIds=[vpc_id])["Vpcs"][0]["CidrBlock"]
+    try:
+        sg_id = ec2.create_security_group(GroupName=f"{PREFIX}-gateway-vpce", VpcId=vpc_id,
+                                          Description="HTTPS to the VPC endpoints from the VPC and on-prem")["GroupId"]
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "InvalidGroup.Duplicate":
+            raise
+        sg_id = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [f"{PREFIX}-gateway-vpce"]},
+                                                      {"Name": "vpc-id", "Values": [vpc_id]}])["SecurityGroups"][0]["GroupId"]
+    for c, desc in [(cidr, "VPC"), *[(c, "on-prem clients") for c in client_cidrs]]:
+        try:
+            ec2.authorize_security_group_ingress(GroupId=sg_id, IpPermissions=[{
+                "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [{"CidrIp": c, "Description": desc}]}])
         except ClientError as e:
-            print(f"  ! could not set policy on {resource}: {e.response['Error']['Message']}")
+            if e.response["Error"]["Code"] != "InvalidPermission.Duplicate":
+                raise
+    return sg_id
 
 
-def deploy_vpc_endpoint(ec2, state: dict, region: str, vpc_id: str, subnet_ids: list[str], sg_id: str | None) -> None:
+def deploy_vpc_endpoint(ec2, state: dict, region: str, vpc_id: str, subnet_ids: list[str], sg_id: str | None,
+                        client_cidrs: list[str] = ()) -> None:
     step("Interface VPC endpoint (PrivateLink) for the gateway data plane")
     if not sg_id:
-        cidr = ec2.describe_vpcs(VpcIds=[vpc_id])["Vpcs"][0]["CidrBlock"]
-        try:
-            sg_id = ec2.create_security_group(GroupName=f"{PREFIX}-gateway-vpce", VpcId=vpc_id,
-                                              Description="HTTPS to AgentCore Gateway endpoint")["GroupId"]
-            ec2.authorize_security_group_ingress(GroupId=sg_id, IpPermissions=[{
-                "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
-                "IpRanges": [{"CidrIp": cidr, "Description": "VPC clients"}]}])
-        except ClientError as e:
-            if e.response["Error"]["Code"] != "InvalidGroup.Duplicate":
-                raise
-            sg_id = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [f"{PREFIX}-gateway-vpce"]},
-                                                          {"Name": "vpc-id", "Values": [vpc_id]}])["SecurityGroups"][0]["GroupId"]
+        sg_id = endpoint_security_group(ec2, vpc_id, list(client_cidrs))
+        if not client_cidrs:
+            print("  ! no --client-cidr given: only clients inside the VPC can reach the endpoint")
     # Only our two gateways are reachable through this endpoint. The tools gateway is listed for a runtime in VPC
     # network mode, whose SigV4 calls would resolve to this endpoint through private DNS. That gateway still
     # requires IAM auth itself.
@@ -380,10 +431,17 @@ def deploy_vpc_endpoint(ec2, state: dict, region: str, vpc_id: str, subnet_ids: 
     service = f"com.amazonaws.{region}.bedrock-agentcore.gateway"
     existing = ec2.describe_vpc_endpoints(Filters=[{"Name": "vpc-id", "Values": [vpc_id]},
                                                    {"Name": "service-name", "Values": [service]}])["VpcEndpoints"]
+    existing = [e for e in existing if e.get("State", "").lower() not in ("deleted", "deleting", "failed", "rejected")]
+    created = state.get("vpce_created", False) and state.get("vpce_id")
     if existing:
         vpce = existing[0]["VpcEndpointId"]
-        ec2.modify_vpc_endpoint(VpcEndpointId=vpce, PolicyDocument=json.dumps(endpoint_policy))
-        print(f"  endpoint {vpce} exists (policy updated)")
+        if created == vpce:
+            ec2.modify_vpc_endpoint(VpcEndpointId=vpce, PolicyDocument=json.dumps(endpoint_policy))
+            print(f"  endpoint {vpce} exists (policy updated)")
+        else:  # someone else's endpoint: don't narrow its policy, don't delete it on cleanup
+            print(f"  ! reusing existing endpoint {vpce}; its policy was NOT changed - allow "
+                  f"{state['ingress_gateway_arn']} and {state['tools_gateway_arn']} in it yourself")
+            state["vpce_created"] = False
     else:
         vpce = ec2.create_vpc_endpoint(VpcEndpointType="Interface", VpcId=vpc_id, ServiceName=service,
                                        SubnetIds=subnet_ids, SecurityGroupIds=[sg_id], PrivateDnsEnabled=True,
@@ -391,6 +449,7 @@ def deploy_vpc_endpoint(ec2, state: dict, region: str, vpc_id: str, subnet_ids: 
                                        TagSpecifications=[{"ResourceType": "vpc-endpoint",
                                                            "Tags": [{"Key": "Name", "Value": f"{PREFIX}-gateway"}]}]
                                        )["VpcEndpoint"]["VpcEndpointId"]
+        state["vpce_created"] = vpce
         print(f"  created endpoint {vpce}; waiting for available...")
         for _ in range(60):
             if ec2.describe_vpc_endpoints(VpcEndpointIds=[vpce])["VpcEndpoints"][0]["State"] == "available":
@@ -411,64 +470,127 @@ def restrict_gateway_to_vpce(ctl, state: dict) -> None:
     print(f"  {arn} accepts only {vpce}")
 
 
+def update_all_runtimes(iam, ctl, state: dict, cfg: dict, account: str, region: str, vpc: dict | None) -> None:
+    update_runtime(iam, ctl, state)
+    for key, a in state.get("agents", {}).items():
+        if a.get("portal"):
+            step(f"Portal runtime '{key}': env, header allowlist, role policy" + (", VPC mode" if vpc else ""))
+            pd.update_portal_runtime(iam, ctl, state, key, a["kind"], cfg, account, region, wait_ready, vpc)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--region")
-    ap.add_argument("--runtime-arn", help="default: .bedrock_agentcore.yaml")
+    ap.add_argument("--runtime-arn", help="CSP architect runtime (default: .bedrock_agentcore.yaml)")
+    ap.add_argument("--runtime", action="append", default=[], metavar="KEY=ARN",
+                    help="runtime ARN for an agent in gateway/agents.yaml, e.g. terraform=arn:... (repeatable)")
+    ap.add_argument("--agents-config", default=str(pd.CONFIG_FILE))
     ap.add_argument("--vpc-id")
-    ap.add_argument("--subnet-ids", help="comma-separated, one per AZ")
-    ap.add_argument("--security-group-id", help="for the endpoint ENIs (default: create one allowing 443 from the VPC)")
+    ap.add_argument("--subnet-ids", help="comma-separated private subnets, one per AZ")
+    ap.add_argument("--security-group-id", help="for the endpoint ENIs (default: create one, 443 from the VPC + --client-cidr)")
+    ap.add_argument("--client-cidr", action="append", default=[],
+                    help="on-prem CIDR of the portal backend (reaches the endpoints over DX / TGW; repeatable)")
+    ap.add_argument("--runtime-vpc", action="store_true",
+                    help="put the portal runtimes in VPC network mode and create their VPC endpoints "
+                         "(bedrock-runtime, logs, secretsmanager, S3 / DynamoDB gateway endpoints)")
+    ap.add_argument("--discovery-url", help="corporate IdP OIDC discovery URL (skips the Cognito test user pool)")
+    ap.add_argument("--allowed-client", action="append", default=[], help="JWT client_id(s) to accept (repeatable)")
+    ap.add_argument("--allowed-audience", action="append", default=[], help="JWT aud value(s) to accept (repeatable)")
     ap.add_argument("--test-user", default="yhtsao", help="Cognito username = alias claim")
     ap.add_argument("--password", help="set the test user's password (default: generate on first create)")
     ap.add_argument("--allowed-alias", action="append", default=[],
                     help="optional: gateway customClaims so only these usernames are accepted (repeatable)")
     ap.add_argument("--allow-invoke-principal", action="append", default=[],
-                    help="extra IAM principal ARN allowed to invoke the runtime directly (break-glass)")
+                    help="extra IAM principal ARN allowed to invoke the runtimes directly (break-glass)")
     ap.add_argument("--update-runtime-only", action="store_true",
                     help="re-apply runtime env vars + header allowlist after `agentcore deploy` overwrote them")
-    ap.add_argument("--skip-vpc", action="store_true", help="deploy everything except the VPC endpoint + policy")
+    ap.add_argument("--skip-vpc", action="store_true", help="deploy everything except the VPC endpoints + policies")
     args = ap.parse_args()
 
+    cfg = pd.load_config(Path(args.agents_config))
     yaml_arn, yaml_region = runtime_from_yaml()
     state = load_state()
     region = args.region or state.get("region") or yaml_region or boto3.Session().region_name or "us-east-1"
     state["region"] = region
-    state["runtime_arn"] = args.runtime_arn or state.get("runtime_arn") or yaml_arn
+    arns = pd.runtime_arns_from_yaml(cfg, dict(x.split("=", 1) for x in args.runtime))
+    state["runtime_arn"] = args.runtime_arn or state.get("runtime_arn") or arns.get("csp-architect") or yaml_arn
     if not state["runtime_arn"]:
         sys.exit("No runtime ARN: run `agentcore deploy` first or pass --runtime-arn")
+    state["agents"] = {}
+    for key, a in pd.portal_agents(cfg).items():
+        if key in arns:
+            state["agents"][key] = {"runtime_arn": arns[key], "target": a["target"], "kind": a["kind"], "portal": True}
+        else:
+            print(f"  (agent '{key}' has no runtime yet: `agentcore configure -e {a['entrypoint']} -n {a['agent_name']}`"
+                  " + `agentcore deploy`, then re-run)")
     session = boto3.Session(region_name=region)
     account = session.client("sts").get_caller_identity()["Account"]
-    iam, ctl = session.client("iam"), session.client("bedrock-agentcore-control")
+    iam, ctl, ec2 = session.client("iam"), session.client("bedrock-agentcore-control"), session.client("ec2")
+    vpc_id = args.vpc_id or state.get("vpc_id")
+    subnet_ids = args.subnet_ids.split(",") if args.subnet_ids else state.get("subnet_ids", [])
+    runtime_vpc = None
 
+    if args.runtime_vpc and (args.skip_vpc or not (vpc_id and subnet_ids)):
+        sys.exit("--runtime-vpc needs the VPC endpoints: pass --vpc-id/--subnet-ids and don't use --skip-vpc")
     try:
+        if args.runtime_vpc:
+            state["subnet_ids"] = subnet_ids
+            runtime_vpc = {"subnet_ids": subnet_ids,
+                           "security_group_id": state.get("runtime_sg") or pd.runtime_security_group(ec2, vpc_id)}
+            state["runtime_sg"] = runtime_vpc["security_group_id"]
         if args.update_runtime_only:
-            update_runtime(iam, ctl, state)
+            if runtime_vpc and not state.get("s3_interface_vpce"):
+                sys.exit("Run a full deploy with --runtime-vpc first (creates the endpoints VPC-mode runtimes need)")
+            update_all_runtimes(iam, ctl, state, cfg, account, region, runtime_vpc)
             return
-        if not args.skip_vpc and not (args.vpc_id and args.subnet_ids) and "vpce_id" not in state:
+        if not args.skip_vpc and not (vpc_id and subnet_ids):
             sys.exit("--vpc-id and --subnet-ids are required (or --skip-vpc)")
-        password = args.password or (getpass.getpass(f"Password for {args.test_user} (blank = generate): ") or None
-                                     if sys.stdin.isatty() and "user_pool_id" not in state else None)
-        deploy_cognito(session.client("cognito-idp"), state, args.test_user, password)
+        if args.discovery_url:  # corporate IdP: no Cognito
+            state.update(discovery_url=args.discovery_url, allowed_clients=args.allowed_client,
+                         allowed_audience=args.allowed_audience)
+        else:
+            password = args.password or (getpass.getpass(f"Password for {args.test_user} (blank = generate): ") or None
+                                         if sys.stdin.isatty() and "user_pool_id" not in state else None)
+            deploy_cognito(session.client("cognito-idp"), state, args.test_user, password)
+            state.setdefault("allowed_clients", [state["client_id"]])
         save_state(state)
-        deploy_lambdas(iam, session.client("lambda"), session.client("s3"), state, account, region)
+        deploy_lambdas(iam, session.client("lambda"), session.client("s3"), state, account, region, pd.tool_acl(cfg))
+        if state["agents"]:
+            step("Portal agents: session table (DynamoDB, TTL) + uploads bucket (S3, 90-day lifecycle)")
+            pd.deploy_session_table(session.client("dynamodb"), state)
+            pd.deploy_uploads_bucket(session.client("s3"), state, cfg, account, region)
+            if cfg.get("git") and not args.skip_vpc:
+                step("git-pr Lambda (VPC-attached; internal Git over TGW / DX; token from Secrets Manager)")
+                pd.deploy_git_lambda(iam, session.client("lambda"), ec2, session.client("secretsmanager"), state, cfg,
+                                     account, subnet_ids, vpc_id, ensure_role, ensure_lambda, zip_files)
         save_state(state)
         deploy_tools_gateway(iam, ctl, state, account, region)
         save_state(state)
-        update_runtime(iam, ctl, state)
+        update_all_runtimes(iam, ctl, state, cfg, account, region, None)  # env + roles; VPC mode comes last
         save_state(state)
         deploy_ingress_gateway(iam, ctl, state, account, region, args.allowed_alias)
         save_state(state)
         harden_runtime(ctl, state, args.allow_invoke_principal)
         if not args.skip_vpc:
-            deploy_vpc_endpoint(session.client("ec2"), state, region, args.vpc_id or state["vpc_id"],
-                                (args.subnet_ids or "").split(",") if args.subnet_ids else [], args.security_group_id)
+            deploy_vpc_endpoint(ec2, state, region, vpc_id, subnet_ids, args.security_group_id, args.client_cidr)
             save_state(state)
+            if state["agents"]:
+                step("VPC endpoints for the runtimes / git-pr Lambda, and the S3 interface endpoint for on-prem uploads")
+                pd.deploy_runtime_endpoints(ec2, state, region, vpc_id, subnet_ids, state["vpce_security_group"])
+                pd.deploy_uploads_bucket(session.client("s3"), state, cfg, account, region)  # now pinned to the endpoint
+                save_state(state)
             restrict_gateway_to_vpce(ctl, state)
+            if runtime_vpc:  # only now: every endpoint the runtimes need exists
+                update_all_runtimes(iam, ctl, state, cfg, account, region, runtime_vpc)
+                save_state(state)
     finally:
         save_state(state)
+    base = state["ingress_gateway_url"].rstrip("/")
     print(f"\n✔ Done. State: {STATE_FILE}")
-    print(f"  Invoke URL: {state['ingress_gateway_url'].rstrip('/')}/{RUNTIME_TARGET}/invocations  (from inside {state.get('vpc_id', 'the VPC')})")
-    print("  Test:       python gateway/client.py --all-checks   (submits a job, then polls; each call is short)")
+    print(f"  CSP architect: {base}/{RUNTIME_TARGET}/invocations")
+    for key, a in state["agents"].items():
+        print(f"  {key + ':':14} {base}/{a['target']}/invocations")
+    print("  Test:          python gateway/client.py --all-checks [--agent coe|aicoe|terraform]")
 
 
 if __name__ == "__main__":

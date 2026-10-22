@@ -1,0 +1,48 @@
+# Cloud Center of Excellence (CoE): document templates used by the COE agent to prepare and to review documents.
+# Replace these with your organisation's own templates. The agent prompts AND the output validation both read this
+# file, so a heading added here is required in every generated document of that type.
+#   heading:  must appear verbatim as a Markdown heading (## ...) in the generated document
+#   required: false = the agent may write "不適用 (N/A)" with a reason instead of content
+domain: coe
+name: Cloud CoE
+default_language: Traditional Chinese
+output_dir: docs/coe
+
+doc_types:
+  solution-design:
+    title: 雲端方案設計審查文件 (Cloud Solution Design Review)
+    purpose: >
+      Submitted to the Cloud CoE before a workload is built or migrated to the cloud. Reviewers check it against the
+      CoE checklist (security, network, resilience, operations, cost, compliance).
+    sections:
+      - {heading: "1. 文件資訊 Document control", required: true, guidance: "Owner, business unit, version, date, reviewers, status, related documents."}
+      - {heading: "2. 摘要 Executive summary", required: true, guidance: "What is being built, why, target go-live, the key decisions and any exceptions requested."}
+      - {heading: "3. 業務背景與範圍 Business context and scope", required: true, guidance: "Business problem, in scope / out of scope, users, environments (dev/test/prod)."}
+      - {heading: "4. 需求 Requirements", required: true, guidance: "Functional and non-functional requirements: availability target, RTO/RPO, performance, data residency, peak load."}
+      - {heading: "5. 架構設計 Architecture", required: true, guidance: "Diagram reference, component list, AWS accounts / landing zone placement, managed services and why."}
+      - {heading: "6. 網路設計 Network design", required: true, guidance: "VPC / CIDR (from IPAM), DX / VPN / TGW connectivity, PrivateLink endpoints, ingress and egress paths, DNS."}
+      - {heading: "7. 身分與存取 Identity and access", required: true, guidance: "Human access through SSO, workload IAM roles and their scope, resource policies, break-glass."}
+      - {heading: "8. 資料保護 Data protection", required: true, guidance: "Data classification, encryption at rest (KMS keys) and in transit, retention, backup, deletion."}
+      - {heading: "9. 韌性與災難復原 Resilience and disaster recovery", required: true, guidance: "Multi-AZ / multi-Region design, DR strategy, how RTO/RPO are met, DR test plan."}
+      - {heading: "10. 維運與監控 Operations and observability", required: true, guidance: "Logging (CloudTrail, flow logs, application), metrics, alerting, runbooks, patching, IaC and change management."}
+      - {heading: "11. 成本估算 Cost estimate", required: true, guidance: "Monthly estimate per environment with assumptions, tagging, budgets and alarms."}
+      - {heading: "12. 法遵與標準對應 Compliance and standards mapping", required: true, guidance: "Internal cloud standards and regulations that apply (e.g. FSC outsourcing rules for financial institutions) and how the design meets them."}
+      - {heading: "13. 風險與例外 Risks and exceptions", required: true, guidance: "Known risks with owners; every deviation from a standard, with its exception request reference."}
+      - {heading: "14. 上線計畫 Rollout and migration plan", required: false, guidance: "Phases, cut-over, rollback."}
+      - {heading: "15. 待確認事項 Open questions", required: true, guidance: "Everything the author still has to confirm. Never invent facts: list them here instead."}
+
+  exception-request:
+    title: 雲端標準例外申請 (Cloud standards exception request)
+    purpose: >
+      Requests a time-boxed exception to a Cloud CoE standard or control, with compensating controls and a
+      remediation plan.
+    sections:
+      - {heading: "1. 文件資訊 Document control", required: true, guidance: "Requester, workload, version, date, approvers."}
+      - {heading: "2. 例外標準 Standard or control", required: true, guidance: "The exact standard / control ID and its requirement."}
+      - {heading: "3. 業務理由 Business justification", required: true, guidance: "Why the standard cannot be met now; impact of not granting the exception."}
+      - {heading: "4. 範圍與期限 Scope and duration", required: true, guidance: "Accounts / resources covered; expiry date (at most 12 months)."}
+      - {heading: "5. 風險評估 Risk assessment", required: true, guidance: "Threats, likelihood, impact, resulting risk rating with rationale."}
+      - {heading: "6. 補償控制 Compensating controls", required: true, guidance: "Concrete, verifiable controls that reduce the risk while the exception is active."}
+      - {heading: "7. 改善計畫 Remediation plan", required: true, guidance: "Steps, owners and dates to become compliant before the expiry."}
+      - {heading: "8. 核准 Approvals", required: true, guidance: "Who must approve (risk owner, CoE, security) and current status."}
+      - {heading: "9. 待確認事項 Open questions", required: true, guidance: "Unconfirmed facts the requester must fill in."}

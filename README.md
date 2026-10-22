@@ -18,6 +18,9 @@ ported to a Strands agent running on Amazon Bedrock AgentCore Runtime.
 - `gateway/` + `tools_gateway.py` – private ingress: PrivateLink → AgentCore Gateway (Cognito JWT) → runtime
   (IAM only), with the caller's alias passed to web search and a post-processing hook Lambda. See
   [gateway/README.md](gateway/README.md)
+- `doc_agent.py` (`coe_agent.py`, `aicoe_agent.py`), `terraform_agent.py`, `portal/`, `templates/` – three more portal
+  agents (Cloud CoE / AI CoE documents, Terraform) with DynamoDB sessions, 90-day uploads and results published as
+  merge requests. See [docs/portal-agents.md](docs/portal-agents.md)
 - `to_html.py` – bundles `.drawio` files into one tabbed HTML page for demos (draw.io viewer, needs internet)
 
 ## Payload

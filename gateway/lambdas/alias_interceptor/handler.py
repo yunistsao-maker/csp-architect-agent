@@ -25,6 +25,8 @@ import re
 
 RUNTIME_ALIAS_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Custom-User-Alias"
 TOOLS_ALIAS_HEADER = "x-user-alias"
+AGENT_HEADER = "x-agent-kind"
+AGENT_RE = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
 ALIAS_RE = re.compile(r"^[A-Za-z0-9._@-]{1,64}$")
 
 
@@ -95,6 +97,20 @@ def handle_http(event: dict, context) -> dict:
         "headers": out_headers, "body": req.get("body")}}}
 
 
+def tool_acl() -> dict | None:
+    """TOOL_ACL: {"terraform": ["web-search-tool", "git-pr-terraform"], "coe": [...], "_default": [...]}.
+
+    Keys are agent kinds (x-agent-kind, set by agent code); values are gateway target names. Unset = allow all.
+    The CSP architect agent sends no kind and gets "_default"."""
+    raw = os.environ.get("TOOL_ACL")
+    return json.loads(raw) if raw else None
+
+
+def _mcp_error(body: dict, code: int, message: str) -> dict:
+    return {"interceptorOutputVersion": "1.0", "mcp": {"transformedGatewayResponse": {
+        "statusCode": 200, "body": {"jsonrpc": "2.0", "id": body.get("id"), "error": {"code": code, "message": message}}}}}
+
+
 def handle_mcp(event: dict, context) -> dict:
     req = event["mcp"].get("gatewayRequest") or {}
     headers = req.get("headers") or {}
@@ -106,11 +122,18 @@ def handle_mcp(event: dict, context) -> dict:
         args = params.get("arguments") or {}
         if not (alias and ALIAS_RE.match(alias)) and os.environ.get("REQUIRE_ALIAS", "true").lower() == "true":
             _log(gateway="tools", decision="deny", reason="missing x-user-alias", tool=params.get("name"))
-            return {"interceptorOutputVersion": "1.0", "mcp": {"transformedGatewayResponse": {
-                "statusCode": 200, "body": {"jsonrpc": "2.0", "id": body.get("id"),
-                                            "error": {"code": -32001, "message": "x-user-alias header is required"}}}}}
-        _log(gateway="tools", decision="allow", alias=alias, tool=params.get("name"),
-             query=args.get("query") if isinstance(args.get("query"), str) else None)
+            return _mcp_error(body, -32001, "x-user-alias header is required")
+        kind = _header(headers, AGENT_HEADER)
+        kind = kind if kind and AGENT_RE.match(kind) else "_default"
+        acl = tool_acl()
+        target = str(params.get("name") or "").split("___", 1)[0]
+        if acl is not None and target not in acl.get(kind, []):
+            _log(gateway="tools", decision="deny", reason="tool not allowed for agent", agent=kind, alias=alias,
+                 tool=params.get("name"))
+            return _mcp_error(body, -32003, f"tool '{params.get('name')}' is not allowed for agent '{kind}'")
+        _log(gateway="tools", decision="allow", alias=alias, agent=kind, tool=params.get("name"),
+             query=args.get("query") if isinstance(args.get("query"), str) else None,
+             files=len(args["files"]) if isinstance(args.get("files"), list) else None)
     out_headers = _without(headers, "authorization")
     return {"interceptorOutputVersion": "1.0", "mcp": {"transformedGatewayRequest": {
         "headers": out_headers, "body": body}}}

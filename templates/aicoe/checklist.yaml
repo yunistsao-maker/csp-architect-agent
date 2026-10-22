@@ -1,0 +1,19 @@
+# AI CoE review checklist (see templates/coe/checklist.yaml for the field meanings).
+domain: aicoe
+items:
+  - {id: GOV-01, area: Governance, applies_to: [all], severity: low, check: "Owner, accountable person, approvers, version and status are stated."}
+  - {id: VAL-01, area: Value, applies_to: [use-case-assessment], severity: medium, check: "Business value is stated with measurable KPIs and targets."}
+  - {id: RSK-01, area: Risk, applies_to: [use-case-assessment], severity: high, check: "A risk tier is assigned under the internal AI policy, with rationale and the high-risk triggers considered."}
+  - {id: DAT-01, area: Data, applies_to: [use-case-assessment], severity: high, check: "Data sources are classified; personal data, legal basis, minimisation and retention are addressed."}
+  - {id: DAT-02, area: Data, applies_to: [all], severity: high, check: "The provider does not use prompts / outputs for training; the processing Region and any cross-border transfer are stated."}
+  - {id: SEC-01, area: Security, applies_to: [use-case-assessment], severity: high, check: "Prompt injection, tool misuse and data leakage threats are analysed, with guardrails and least-privilege tools."}
+  - {id: RAI-01, area: Responsible AI, applies_to: [use-case-assessment], severity: medium, check: "Fairness / bias is assessed where outputs affect people."}
+  - {id: RAI-02, area: Responsible AI, applies_to: [use-case-assessment], severity: medium, check: "Users are told they are dealing with AI; AI-generated content is labelled where required."}
+  - {id: HUM-01, area: Oversight, applies_to: [use-case-assessment], severity: high, check: "Human oversight is proportionate to the risk tier, with escalation and override."}
+  - {id: EVL-01, area: Evaluation, applies_to: [all], severity: high, check: "Evaluation metrics, datasets and acceptance thresholds are defined (and results reported for a model change)."}
+  - {id: EVL-02, area: Evaluation, applies_to: [all], severity: medium, check: "Red-teaming / safety testing is planned or its results are reported."}
+  - {id: MON-01, area: Operations, applies_to: [use-case-assessment], severity: medium, check: "Production monitoring, logging, incident response and a kill switch are defined."}
+  - {id: MDL-01, area: Model, applies_to: [all], severity: medium, check: "Model, version, provider and hosting are identified; lifecycle / deprecation is handled."}
+  - {id: CHG-01, area: Change, applies_to: [model-change], severity: high, check: "A rollback plan exists, was tested, and has trigger criteria."}
+  - {id: CHG-02, area: Change, applies_to: [model-change], severity: high, check: "Old and new versions are compared on the same metrics and datasets; regressions are explained."}
+  - {id: CMP-01, area: Compliance, applies_to: [use-case-assessment], severity: high, check: "The internal AI policy and applicable regulations / frameworks are mapped to controls."}

@@ -3,3 +3,5 @@ bedrock-agentcore
 strands-agents>=1.59.0
 pyyaml
 boto3
+python-hcl2>=8.0
+moto[s3,dynamodb]>=5.0
