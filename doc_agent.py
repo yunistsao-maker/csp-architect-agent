@@ -153,6 +153,16 @@ def check_review(cfg: dict, doc_type: str, review: dict | None, parse_errors: li
         return {"ok": False, "errors": parse_errors}
     errors = []
     items = {i["id"]: i for i in checklist_for(cfg, doc_type)}
+    for key in ("checklist", "findings"):  # model output is untrusted: shapes first
+        rows = review.get(key)
+        if rows is not None and (not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows)):
+            errors.append(f"'{key}' must be a list of objects")
+            review[key] = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+        for r in review.get(key) or []:
+            for f in ("id", "checklist_id", "status", "severity"):
+                if f in r and not isinstance(r[f], (str, type(None))):
+                    errors.append(f"{key} row {str(r.get('id'))[:20]!r}: '{f}' must be a string")
+                    r[f] = str(r[f])
     if review.get("verdict") not in VERDICTS:
         errors.append(f"verdict must be one of {', '.join(VERDICTS)}")
     statuses = {}
@@ -195,12 +205,13 @@ def render_review(cfg: dict, doc_type: str, review: dict, title: str) -> str:
              f"- Verdict: **{review.get('verdict')}**", "", review.get("summary", ""), "",
              "## Findings", "", "| ID | Severity | Checklist | Section | Issue | Recommendation |", "|---|---|---|---|---|---|"]
     esc = lambda s: str(s or "").replace("|", "\\|").replace("\n", " ")  # noqa: E731
-    for f in sorted(review.get("findings") or [], key=lambda f: SEVERITIES.index(f.get("severity", "low"))):
+    rank = lambda f: SEVERITIES.index(f.get("severity")) if f.get("severity") in SEVERITIES else len(SEVERITIES)  # noqa: E731
+    for f in sorted([f for f in review.get("findings") or [] if isinstance(f, dict)], key=rank):
         lines.append(f"| {esc(f.get('id'))} | {esc(f.get('severity'))} | {esc(f.get('checklist_id'))} | "
                      f"{esc(f.get('section'))} | {esc(f.get('issue'))} | {esc(f.get('recommendation'))} |")
     lines += ["", "## Checklist", "", "| ID | Area | Check | Status | Evidence |", "|---|---|---|---|---|"]
-    for row in review.get("checklist") or []:
-        item = items.get(row.get("id"), {})
+    for row in [r for r in review.get("checklist") or [] if isinstance(r, dict)]:
+        item = items.get(str(row.get("id")), {})
         lines.append(f"| {esc(row.get('id'))} | {esc(item.get('area'))} | {esc(item.get('check'))} | "
                      f"{esc(row.get('status'))} | {esc(row.get('evidence'))} |")
     return "\n".join(lines) + "\n"
@@ -271,7 +282,7 @@ def run(domain: str, payload: dict, ctx: RunContext) -> dict:
                 "files": {path: document + "\n"} if document else {},
                 "summary": f"{cfg['doc_types'][doc_type]['title']} draft; {len(questions)} open question(s)."}
     title = payload.get("title") or doc_type
-    report = render_review(cfg, doc_type, review, title) if review else ""
+    report = render_review(cfg, doc_type, review, title) if review and checks["ok"] else ""
     path = f"{cfg['output_dir']}/reviews/{doc_type}/{date}-{name}-review.md"
     return {**base, "title": f"[{cfg['name']} review] {title}", "verdict": (review or {}).get("verdict"),
             "review": review, "report": report, "files": {path: report} if report else {},

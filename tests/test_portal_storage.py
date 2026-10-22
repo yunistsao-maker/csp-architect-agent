@@ -175,3 +175,69 @@ def test_session_lock_lease(aws):
 def test_session_ids(sid):
     with pytest.raises(SessionError):
         check_session_id(sid)
+
+
+# ---------------------------------------------------------------------------------------------- review findings
+def test_two_writers_cannot_overwrite_a_turn(aws):
+    repo1, repo2 = (DynamoDBSessionRepository(aws["table"], "yhtsao") for _ in range(2))
+    a1, _, _ = agent_with(repo1, "race-session", [{"text": "v1"}])
+    a1("first")
+    b1, _, _ = agent_with(repo1, "race-session", [{"text": "from b"}])  # both restored the same history
+    c1, _, _ = agent_with(repo2, "race-session", [{"text": "from c"}])
+    b1("second (b)")
+    with pytest.raises(Exception, match="already exists"):
+        c1("second (c)")
+    texts = [m.message["content"][0]["text"] for m in repo1.list_messages("race-session", "coe")]
+    assert texts == ["first", "v1", "second (b)", "from b"]
+
+
+def test_attachment_bytes_are_not_persisted(aws):
+    repo = DynamoDBSessionRepository(aws["table"], "yhtsao")
+    a1, model, _ = agent_with(repo, "attach-session", [{"text": "I see a diagram"}])
+    a1([{"text": "what is this?"}, {"image": {"format": "png", "source": {"bytes": PNG}}},
+        {"document": {"format": "pdf", "name": "spec", "source": {"bytes": b"%PDF-1.7"}}}])
+    assert model.seen[0]["content"][1]["image"]["source"]["bytes"] == PNG  # the model saw the real image
+    stored = repo.list_messages("attach-session", "coe")[0].message["content"]
+    assert stored[0] == {"text": "what is this?"} and "image" not in stored[1] and "not resent" in stored[1]["text"]
+    assert "'spec' (pdf)" in stored[2]["text"]
+
+
+class MaxTokensModel(ScriptedModel):
+    async def stream(self, messages, *a, **kw):
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockStart": {"start": {}}}
+        yield {"contentBlockDelta": {"delta": {"text": "<document>truncated"}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "max_tokens"}}
+
+
+def test_max_tokens_rolls_back_the_persisted_turn(aws):
+    from portal.model import OutputTruncated, run_turn
+    repo = DynamoDBSessionRepository(aws["table"], "yhtsao")
+    a1, _, mgr = agent_with(repo, "maxtok-session", [{"text": "v1"}])
+    run_turn(a1, "first", None, mgr)
+    a1.model = MaxTokensModel([])
+    with pytest.raises(OutputTruncated):
+        run_turn(a1, "make it huge", None, mgr)
+    assert [m.message_id for m in repo.list_messages("maxtok-session", "coe")] == [0, 1] and len(a1.messages) == 2
+    a1.model = ScriptedModel([{"text": "smaller"}])
+    run_turn(a1, "smaller please", None, mgr)
+    assert [m.message_id for m in repo.list_messages("maxtok-session", "coe")] == [0, 1, 2, 3]
+
+
+def test_heartbeat_exit_waits_for_an_in_flight_beat():
+    import jobs
+
+    class SlowStore(jobs.MemoryJobStore):
+        def put(self, record):
+            if record["status"] == "RUNNING":
+                time.sleep(0.3)  # slow S3 put of the RUNNING beat
+            super().put(record)
+
+    store = SlowStore()
+    rec = jobs.new_record(jobs.new_job_id(), "yhtsao", {})
+    with jobs.Heartbeat(store, rec, interval=0.01):
+        time.sleep(0.05)  # a beat is now in flight
+    store.put({**rec, "status": "SUCCEEDED"})
+    time.sleep(0.4)
+    assert store.get(rec["job_id"])["status"] == "SUCCEEDED"

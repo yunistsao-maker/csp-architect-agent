@@ -34,8 +34,9 @@ def ctx(alias="yhtsao", kind="terraform"):
 class FakeApi:
     """Records calls; answers like GitLab / GitHub for the PR flow."""
 
-    def __init__(self, provider, existing=None, files_on_base=()):
+    def __init__(self, provider, existing=None, files_on_base=(), branch_exists=False):
         self.provider, self.calls, self.existing, self.on_base = provider, [], existing or [], set(files_on_base)
+        self.branch_exists = branch_exists
 
     def __call__(self, req):
         method, url = req.get_method(), req.full_url
@@ -43,6 +44,8 @@ class FakeApi:
         self.calls.append((method, url.split("/api", 1)[-1], body, dict(req.header_items())))
         if method == "GET" and ("merge_requests?" in url or "/pulls?" in url):
             return 200, json.dumps(self.existing).encode()
+        if "/repository/branches/" in url or ("/git/ref/heads/agent" in url):
+            return (200, b'{"object":{"sha":"x"}}') if self.branch_exists else (404, b'{"message":"Not Found"}')
         if "/repository/files/" in url:
             path = url.split("/repository/files/")[1].split("?")[0].replace("%2F", "/")
             return (200, b"{}") if path in self.on_base else (404, b'{"message":"404 File Not Found"}')
@@ -150,3 +153,14 @@ def test_no_acl_allows_everything(monkeypatch):
     monkeypatch.delenv("TOOL_ACL", raising=False)
     out = icpt.lambda_handler(mcp_event("coe", "web-search-tool___WebSearch"), SimpleNamespace(client_context=None))
     assert "transformedGatewayRequest" in out["mcp"]
+
+
+@pytest.mark.parametrize("provider,base", [("gitlab", "https://g/api/v4"), ("github", "https://g/api/v3")])
+def test_retry_after_half_finished_publish_only_opens_the_pr(monkeypatch, provider, base):
+    monkeypatch.setenv("GIT_PROVIDER", provider)
+    api = FakeApi(provider, branch_exists=True)
+    out = git.lambda_handler(event(), ctx(), http=git.Http(base, "t", provider, opener=api))
+    assert "error" not in out and out["branch"] == f"agent/terraform/yhtsao/{JOB[:12]}"
+    posted = [u for m, u, _, _ in api.calls if m == "POST"]
+    assert not any(u.endswith(("/repository/commits", "/git/trees", "/git/commits", "/git/refs")) for u in posted)
+    assert any(u.endswith(("/merge_requests", "/pulls")) for u in posted)

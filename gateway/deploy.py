@@ -99,7 +99,8 @@ def zip_files(files: dict[str, Path]) -> bytes:
     return buf.getvalue()
 
 
-def ensure_lambda(lam, name: str, role_arn: str, code: bytes, env: dict, account: str, timeout=60, memory=512) -> str:
+def ensure_lambda(lam, name: str, role_arn: str, code: bytes, env: dict, account: str, timeout=60, memory=512,
+                  permission: bool = True) -> str:
     try:
         arn = lam.create_function(FunctionName=name, Runtime="python3.12", Role=role_arn, Handler="handler.lambda_handler",
                                   Code={"ZipFile": code}, Timeout=timeout, MemorySize=memory,
@@ -114,6 +115,8 @@ def ensure_lambda(lam, name: str, role_arn: str, code: bytes, env: dict, account
         print(f"  updated function {name}")
     lam.get_waiter("function_active_v2").wait(FunctionName=name)
     lam.get_waiter("function_updated_v2").wait(FunctionName=name)
+    if not permission:
+        return arn
     try:
         lam.add_permission(FunctionName=name, StatementId="agentcore-gateway", Action="lambda:InvokeFunction",
                            Principal="bedrock-agentcore.amazonaws.com", SourceAccount=account)
@@ -158,8 +161,11 @@ def ensure_gateway(ctl, name: str, **kwargs) -> dict:
 
 def ensure_target(ctl, gateway_id: str, name: str, **kwargs) -> str:
     for t in ctl.list_gateway_targets(gatewayIdentifier=gateway_id, maxResults=50).get("items", []):
-        if t["name"] == name:
-            print(f"  target {name} exists: {t['targetId']}")
+        if t["name"] == name:  # re-apply the configuration so schema / header changes take effect
+            ctl.update_gateway_target(gatewayIdentifier=gateway_id, targetId=t["targetId"], name=name, **kwargs)
+            wait_ready(lambda: ctl.get_gateway_target(gatewayIdentifier=gateway_id, targetId=t["targetId"]),
+                       f"target {name}")
+            print(f"  target {name} updated: {t['targetId']}")
             return t["targetId"]
     target_id = ctl.create_gateway_target(gatewayIdentifier=gateway_id, name=name, **kwargs)["targetId"]
     print(f"  created target {name}: {target_id}")
@@ -277,6 +283,13 @@ def deploy_tools_gateway(iam, ctl, state: dict, account: str, region: str) -> No
                               "mode": {"type": "string"}, "session_id": {"type": "string"},
                               "agent_validation_ok": {"type": "boolean"}}}}]}}}})
     if state.get("git_pr_arn"):
+        try:  # only this gateway may invoke git-pr (it trusts the client context for alias / agent kind)
+            boto3.client("lambda", region_name=region).add_permission(
+                FunctionName=state["git_pr_arn"], StatementId="tools-gateway-only", Action="lambda:InvokeFunction",
+                Principal="bedrock-agentcore.amazonaws.com", SourceArn=gw["gatewayArn"], SourceAccount=account)
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ResourceConflictException":
+                raise
         ensure_target(ctl, gw["gatewayId"], pd.GIT_TARGET, **pd.git_target_config(state))
 
 
@@ -377,8 +390,8 @@ def harden_runtime(ctl, state: dict, extra_principals: list[str]) -> None:
         try:
             ctl.put_resource_policy(resourceArn=resource, policy=json.dumps(policy))
             print(f"  policy set on {resource}")
-        except ClientError as e:
-            print(f"  ! could not set policy on {resource}: {e.response['Error']['Message']}")
+        except ClientError as e:  # fail closed: without it any IAM principal could call the runtime directly
+            sys.exit(f"Could not set the resource policy on {resource}: {e.response['Error']['Message']}")
 
 
 def endpoint_security_group(ec2, vpc_id: str, client_cidrs: list[str]) -> str:
@@ -418,10 +431,17 @@ def deploy_vpc_endpoint(ec2, state: dict, region: str, vpc_id: str, subnet_ids: 
     service = f"com.amazonaws.{region}.bedrock-agentcore.gateway"
     existing = ec2.describe_vpc_endpoints(Filters=[{"Name": "vpc-id", "Values": [vpc_id]},
                                                    {"Name": "service-name", "Values": [service]}])["VpcEndpoints"]
+    existing = [e for e in existing if e.get("State", "").lower() not in ("deleted", "deleting", "failed", "rejected")]
+    created = state.get("vpce_created", False) and state.get("vpce_id")
     if existing:
         vpce = existing[0]["VpcEndpointId"]
-        ec2.modify_vpc_endpoint(VpcEndpointId=vpce, PolicyDocument=json.dumps(endpoint_policy))
-        print(f"  endpoint {vpce} exists (policy updated)")
+        if created == vpce:
+            ec2.modify_vpc_endpoint(VpcEndpointId=vpce, PolicyDocument=json.dumps(endpoint_policy))
+            print(f"  endpoint {vpce} exists (policy updated)")
+        else:  # someone else's endpoint: don't narrow its policy, don't delete it on cleanup
+            print(f"  ! reusing existing endpoint {vpce}; its policy was NOT changed - allow "
+                  f"{state['ingress_gateway_arn']} and {state['tools_gateway_arn']} in it yourself")
+            state["vpce_created"] = False
     else:
         vpce = ec2.create_vpc_endpoint(VpcEndpointType="Interface", VpcId=vpc_id, ServiceName=service,
                                        SubnetIds=subnet_ids, SecurityGroupIds=[sg_id], PrivateDnsEnabled=True,
@@ -429,6 +449,7 @@ def deploy_vpc_endpoint(ec2, state: dict, region: str, vpc_id: str, subnet_ids: 
                                        TagSpecifications=[{"ResourceType": "vpc-endpoint",
                                                            "Tags": [{"Key": "Name", "Value": f"{PREFIX}-gateway"}]}]
                                        )["VpcEndpoint"]["VpcEndpointId"]
+        state["vpce_created"] = vpce
         print(f"  created endpoint {vpce}; waiting for available...")
         for _ in range(60):
             if ec2.describe_vpc_endpoints(VpcEndpointIds=[vpce])["VpcEndpoints"][0]["State"] == "available":
@@ -509,13 +530,17 @@ def main():
     subnet_ids = args.subnet_ids.split(",") if args.subnet_ids else state.get("subnet_ids", [])
     runtime_vpc = None
 
+    if args.runtime_vpc and (args.skip_vpc or not (vpc_id and subnet_ids)):
+        sys.exit("--runtime-vpc needs the VPC endpoints: pass --vpc-id/--subnet-ids and don't use --skip-vpc")
     try:
-        if args.runtime_vpc and vpc_id and subnet_ids:
+        if args.runtime_vpc:
             state["subnet_ids"] = subnet_ids
             runtime_vpc = {"subnet_ids": subnet_ids,
                            "security_group_id": state.get("runtime_sg") or pd.runtime_security_group(ec2, vpc_id)}
             state["runtime_sg"] = runtime_vpc["security_group_id"]
         if args.update_runtime_only:
+            if runtime_vpc and not state.get("s3_interface_vpce"):
+                sys.exit("Run a full deploy with --runtime-vpc first (creates the endpoints VPC-mode runtimes need)")
             update_all_runtimes(iam, ctl, state, cfg, account, region, runtime_vpc)
             return
         if not args.skip_vpc and not (vpc_id and subnet_ids):
@@ -541,7 +566,7 @@ def main():
         save_state(state)
         deploy_tools_gateway(iam, ctl, state, account, region)
         save_state(state)
-        update_all_runtimes(iam, ctl, state, cfg, account, region, runtime_vpc)
+        update_all_runtimes(iam, ctl, state, cfg, account, region, None)  # env + roles; VPC mode comes last
         save_state(state)
         deploy_ingress_gateway(iam, ctl, state, account, region, args.allowed_alias)
         save_state(state)
@@ -555,6 +580,9 @@ def main():
                 pd.deploy_uploads_bucket(session.client("s3"), state, cfg, account, region)  # now pinned to the endpoint
                 save_state(state)
             restrict_gateway_to_vpce(ctl, state)
+            if runtime_vpc:  # only now: every endpoint the runtimes need exists
+                update_all_runtimes(iam, ctl, state, cfg, account, region, runtime_vpc)
+                save_state(state)
     finally:
         save_state(state)
     base = state["ingress_gateway_url"].rstrip("/")

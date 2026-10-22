@@ -57,7 +57,9 @@ def main():
     ctl, iam = s.client("bedrock-agentcore-control"), s.client("iam")
 
     ec2 = s.client("ec2")
-    endpoints = [state.get("vpce_id"), state.get("s3_interface_vpce"), *(state.get("runtime_endpoints") or {}).values()]
+    # Only endpoints this stack created (shared endpoints that already existed in the VPC are left alone).
+    endpoints = [state.get("vpce_created") or None,
+                 *(state.get("created_endpoints") or {}).values()]
     for vpce in filter(None, endpoints):
         safe(f"VPC endpoint {vpce}", ec2.delete_vpc_endpoints, VpcEndpointIds=[vpce])
     runtimes = [state.get("runtime_arn"), *[a["runtime_arn"] for a in (state.get("agents") or {}).values()]]

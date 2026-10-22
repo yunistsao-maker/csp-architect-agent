@@ -2,6 +2,9 @@
 # The rules here are enforced by terraform_checks.py; `conventions` is given to the model as instructions.
 required_tags: [Owner, CostCenter, Environment, DataClassification]
 require_backend: true
+# Code that runs during `terraform plan` in CI must come from reviewed places only (TF016 / TF017, not waivable).
+allowed_module_sources: ["gitlab.corp.example/platform/terraform-modules/"]   # plus local ./ and ../ paths
+allowed_provider_sources: ["hashicorp/"]
 required_files: [versions.tf, variables.tf, outputs.tf, README.md]
 forbidden_resources:   # strictly private networks: waive in the file with "# tfcheck:allow TF008 <reason>"
   aws_internet_gateway: "Internet gateways are not allowed in private workload VPCs; use the shared egress/inspection VPC."
@@ -19,4 +22,6 @@ conventions: |
   - Encryption: S3 with public access block + SSE-KMS, RDS storage_encrypted, KMS keys with rotation, IMDSv2 only.
   - Layout: one root module per environment folder (envs/<env>/) calling reusable modules (modules/<name>/);
     for_each over count; snake_case names; outputs for every ID other modules need.
+  - Never use data "external", data "http", provisioners, null_resource / terraform_data, or the external / null /
+    http providers. Modules only from local paths or the internal module registry.
   - README.md: purpose, inputs/outputs summary, how to run plan/apply through CI, and any tfcheck waivers.

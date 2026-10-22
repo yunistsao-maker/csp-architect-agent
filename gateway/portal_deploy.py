@@ -19,7 +19,7 @@ USER_ALIAS_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Custom-User-Alias"
 GIT_TARGET = "git-pr"
 RUNTIME_KEEP = ["agentRuntimeArtifact", "roleArn", "networkConfiguration", "protocolConfiguration",
                 "lifecycleConfiguration", "authorizerConfiguration", "metadataConfiguration",
-                "filesystemConfigurations", "description"]
+                "filesystemConfigurations", "description", "capacityProviderConfiguration", "platformVersion"]
 
 
 # ---------------------------------------------------------------------------------------------- config
@@ -187,8 +187,10 @@ def deploy_git_lambda(iam, lam, ec2, sm, state: dict, cfg: dict, account: str, s
     files = {"handler.py": HERE / "lambdas/git_pr/handler.py"}
     if g.get("ca_bundle"):
         files[Path(g["ca_bundle"]).name] = ROOT / g["ca_bundle"]
+    # No generic invoke permission: deploy_tools_gateway grants it to the tools gateway ARN only, because the
+    # caller identity (alias, agent kind) comes from the invocation's client context.
     state["git_pr_arn"] = ensure_lambda(lam, f"{PREFIX}-git-pr", role, zip_files(files), git_lambda_env(cfg, secret),
-                                        account, timeout=60, memory=256)
+                                        account, timeout=60, memory=256, permission=False)
     lam.update_function_configuration(FunctionName=f"{PREFIX}-git-pr",
                                       VpcConfig={"SubnetIds": subnet_ids, "SecurityGroupIds": [sg]})
     lam.get_waiter("function_updated_v2").wait(FunctionName=f"{PREFIX}-git-pr")
@@ -239,37 +241,47 @@ ENDPOINT_SERVICES = {  # service suffix -> (type, private DNS)
 }
 
 
+def _live_endpoints(ec2, vpc_id: str) -> list[dict]:
+    return [e for e in ec2.describe_vpc_endpoints(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["VpcEndpoints"]
+            if e.get("State", "").lower() not in ("deleted", "deleting", "failed", "rejected", "expired")]
+
+
+def _find(endpoints: list[dict], service: str, typ: str) -> dict | None:
+    return next((e for e in endpoints if e["ServiceName"] == service and e["VpcEndpointType"] == typ), None)
+
+
 def deploy_runtime_endpoints(ec2, state: dict, region: str, vpc_id: str, subnet_ids: list[str], sg_id: str) -> None:
-    """Endpoints for runtimes in VPC mode and the git-pr Lambda, plus the S3 interface endpoint on-prem uploads use."""
+    """Endpoints for runtimes in VPC mode and the git-pr Lambda, plus the S3 interface endpoint on-prem uploads use.
+
+    Endpoints that already exist in the VPC (shared with other workloads) are reused and NOT recorded as ours,
+    so cleanup.py never deletes them."""
     route_tables = sorted({rt["RouteTableId"] for rt in ec2.describe_route_tables(Filters=[
         {"Name": "association.subnet-id", "Values": subnet_ids}])["RouteTables"]})
-    existing = {e["ServiceName"]: e for e in ec2.describe_vpc_endpoints(Filters=[
-        {"Name": "vpc-id", "Values": [vpc_id]}])["VpcEndpoints"]}
-    created = {}
+    ours = state.setdefault("created_endpoints", {})
+    tags = [{"ResourceType": "vpc-endpoint", "Tags": [{"Key": "csp-arch", "Value": "portal"}]}]
     for svc, (typ, private_dns) in ENDPOINT_SERVICES.items():
         name = f"com.amazonaws.{region}.{svc}"
-        hit = [e for e in existing.values() if e["ServiceName"] == name and e["VpcEndpointType"] == typ]
-        if hit:
-            created[svc] = hit[0]["VpcEndpointId"]
+        if _find(_live_endpoints(ec2, vpc_id), name, typ):
             continue
         kw = {"RouteTableIds": route_tables} if typ == "Gateway" else {
             "SubnetIds": subnet_ids, "SecurityGroupIds": [sg_id], "PrivateDnsEnabled": private_dns}
-        created[svc] = ec2.create_vpc_endpoint(VpcEndpointType=typ, VpcId=vpc_id, ServiceName=name, **kw)["VpcEndpoint"]["VpcEndpointId"]
+        ours[f"{svc}-{typ.lower()}"] = ec2.create_vpc_endpoint(
+            VpcEndpointType=typ, VpcId=vpc_id, ServiceName=name, TagSpecifications=tags, **kw)["VpcEndpoint"]["VpcEndpointId"]
         print(f"  created {typ.lower()} endpoint {name}")
     # S3 interface endpoint for presigned uploads from on-prem. Private DNS only for the inbound Resolver endpoint:
-    # on-prem resolves the bucket host to this endpoint; inside the VPC S3 keeps using the gateway endpoint.
+    # on-prem resolves <bucket>.s3.<region>.amazonaws.com to this endpoint; inside the VPC S3 keeps using the gateway
+    # endpoint (which must exist first).
     s3_name = f"com.amazonaws.{region}.s3"
-    hit = [e for e in existing.values() if e["ServiceName"] == s3_name and e["VpcEndpointType"] == "Interface"]
+    hit = _find(_live_endpoints(ec2, vpc_id), s3_name, "Interface")
     if hit:
-        state["s3_interface_vpce"] = hit[0]["VpcEndpointId"]
+        state["s3_interface_vpce"] = hit["VpcEndpointId"]
     else:
-        time.sleep(5)  # the gateway endpoint must exist first for PrivateDnsOnlyForInboundResolverEndpoint
-        state["s3_interface_vpce"] = ec2.create_vpc_endpoint(
+        time.sleep(5)
+        state["s3_interface_vpce"] = ours["s3-interface"] = ec2.create_vpc_endpoint(
             VpcEndpointType="Interface", VpcId=vpc_id, ServiceName=s3_name, SubnetIds=subnet_ids, SecurityGroupIds=[sg_id],
-            PrivateDnsEnabled=True, DnsOptions={"PrivateDnsOnlyForInboundResolverEndpoint": True},
+            PrivateDnsEnabled=True, DnsOptions={"PrivateDnsOnlyForInboundResolverEndpoint": True}, TagSpecifications=tags,
         )["VpcEndpoint"]["VpcEndpointId"]
         print(f"  created interface endpoint {s3_name} (private DNS for on-prem via the inbound Resolver)")
-    state["runtime_endpoints"] = created
 
 
 def runtime_security_group(ec2, vpc_id: str) -> str:

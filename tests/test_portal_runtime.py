@@ -111,8 +111,12 @@ def test_sync_mode_and_bad_session_ids(portal):
 
 
 def test_upload_url(portal):
+    portal._presign_s3 = None  # the real presigning client
     up = portal.invoke({"action": "upload_url", "filename": "board.jpg", "content_type": "image/jpeg", "size": 2048}, ctx())
     assert up["key"].startswith("uploads/yhtsao/") and up["method"] == "PUT"
+    # regional host, so on-prem DNS resolves it to the S3 interface endpoint (never the global s3.amazonaws.com)
+    assert up["url"].startswith("https://uploads-bucket.s3.us-east-1.amazonaws.com/uploads/yhtsao/")
+    assert "X-Amz-Signature=" in up["url"]
     bad = portal.invoke({"action": "upload_url", "filename": "a.exe", "content_type": "application/x-msdownload",
                          "size": 10}, ctx())
     assert bad["error_code"] == "bad_request"
@@ -140,3 +144,30 @@ def test_publish_refuses_failed_checks_and_running_jobs(portal):
     drain(portal)
     assert portal.invoke({"action": "publish", "job_id": sub["job_id"]}, ctx())["error_code"] == "checks_failed"
     assert FakeTools.calls == []
+
+
+def test_sync_request_keeps_renewing_its_lease(aws):
+    """A synchronous request longer than the lease must still hold the session (lease renewed meanwhile)."""
+    import time as _t
+    seen = {}
+
+    def slow(payload, rc):
+        _t.sleep(2.5)
+        seen["second"] = p.invoke({"prompt": "y", "async": False, "session_id": "long-sync-1"}, ctx())
+        return {"ok": True}
+
+    p = PortalAgentApp("coe", slow, settings=Settings(require_alias=True, session_table="sessions",
+                                                      heartbeat_seconds=0.2, stale_seconds=1.5))
+    p._job_store, p._table = jobs.MemoryJobStore(), aws["table"]
+    p._context = lambda payload, alias, job_id, sid: __import__("portal.runtime", fromlist=["RunContext"]).RunContext(
+        "coe", alias, job_id, sid)
+    out = p.invoke({"prompt": "x", "async": False, "session_id": "long-sync-1"}, ctx())
+    assert out["ok"] and seen["second"]["error_code"] == "session_busy"
+
+
+def test_publish_only_from_the_agent_that_made_the_job(portal):
+    sub = portal.invoke({"prompt": "x"}, ctx())
+    drain(portal)
+    record = portal.job_store.get(sub["job_id"])
+    portal.job_store.put({**record, "request": {**record["request"], "agent": "terraform"}})
+    assert portal.invoke({"action": "publish", "job_id": sub["job_id"]}, ctx())["error_code"] == "not_found"

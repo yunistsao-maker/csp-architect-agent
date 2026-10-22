@@ -16,8 +16,10 @@ SessionLock prevents two jobs from appending to the same conversation at once. I
 heartbeat, so a microVM that dies frees the session within a few minutes.
 """
 
+import dataclasses
 import json
 import re
+import threading
 import time
 
 from boto3.dynamodb.conditions import Attr, Key
@@ -26,6 +28,25 @@ from strands.types.session import Session, SessionAgent, SessionMessage
 
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 OFFLOAD_BYTES = 300_000  # DynamoDB items max out at 400 KB including attribute names
+
+
+def strip_attachments(message: dict) -> dict:
+    """Persist uploaded images / documents as a short note instead of their bytes.
+
+    The bytes are already in S3 (uploads/), and resending every earlier attachment on each turn would exceed
+    Bedrock's per-request document limit and grow every request. The current turn still sees the real bytes,
+    because only the persisted copy changes."""
+    content = []
+    for block in message.get("content", []):
+        kind = "image" if "image" in block else "document" if "document" in block else None
+        if kind:
+            info = block[kind]
+            name = f" '{info.get('name')}'" if info.get("name") else ""
+            content.append({"text": f"[{kind}{name} ({info.get('format')}) attached in an earlier turn; not resent. "
+                                    "Ask the user to attach it again if you need to look at it.]"})
+        else:
+            content.append(block)
+    return {**message, "content": content}
 
 
 class SessionError(ValueError):
@@ -111,14 +132,22 @@ class DynamoDBSessionRepository(SessionRepository):
         return f"MSG#{agent_id}#{int(message_id):08d}"
 
     def create_message(self, session_id: str, agent_id: str, session_message: SessionMessage, **kwargs) -> None:
-        self._put(session_id, self._msg_sk(agent_id, session_message.message_id), session_message.to_dict())
+        # Never overwrite an existing turn: two writers on one session must fail loudly, not interleave.
+        msg = dataclasses.replace(session_message, message=strip_attachments(session_message.message))
+        try:
+            self._put(session_id, self._msg_sk(agent_id, session_message.message_id), msg.to_dict(),
+                      condition=Attr("SK").not_exists() | Attr("expires_at").lt(int(self.clock())))
+        except self.table.meta.client.exceptions.ConditionalCheckFailedException:
+            raise SessionBusy(f"Message {session_message.message_id} already exists in session {session_id}; "
+                              "another request wrote to this conversation.") from None
 
     def read_message(self, session_id: str, agent_id: str, message_id: int, **kwargs) -> SessionMessage | None:
         data = self._get(session_id, self._msg_sk(agent_id, message_id))
         return SessionMessage.from_dict(data) if data else None
 
     def update_message(self, session_id: str, agent_id: str, session_message: SessionMessage, **kwargs) -> None:
-        self.create_message(session_id, agent_id, session_message)
+        msg = dataclasses.replace(session_message, message=strip_attachments(session_message.message))
+        self._put(session_id, self._msg_sk(agent_id, session_message.message_id), msg.to_dict())
 
     def list_messages(self, session_id: str, agent_id: str, limit: int | None = None, offset: int = 0,
                       **kwargs) -> list[SessionMessage]:
@@ -156,15 +185,43 @@ class SessionLock:
 
     def renew(self) -> None:
         now = self.clock()
-        self.table.update_item(Key={"PK": self.pk, "SK": "LOCK"}, UpdateExpression="SET lease_until = :l",
-                               ConditionExpression=Attr("owner").eq(self.owner),
-                               ExpressionAttributeValues={":l": int(now + self.lease)})
+        try:
+            self.table.update_item(Key={"PK": self.pk, "SK": "LOCK"}, UpdateExpression="SET lease_until = :l",
+                                   ConditionExpression=Attr("owner").eq(self.owner),
+                                   ExpressionAttributeValues={":l": int(now + self.lease)})
+        except self.table.meta.client.exceptions.ConditionalCheckFailedException:
+            raise SessionBusy("The session lock was taken over by another request.") from None
 
     def release(self) -> None:
         try:
             self.table.delete_item(Key={"PK": self.pk, "SK": "LOCK"}, ConditionExpression=Attr("owner").eq(self.owner))
         except self.table.meta.client.exceptions.ConditionalCheckFailedException:
             pass  # the lease expired and someone else holds it now
+
+
+class LeaseRenewer:
+    """Renews a SessionLock every `interval` seconds while a synchronous request runs."""
+
+    def __init__(self, lock: "SessionLock", interval: float):
+        self.lock, self.interval, self.error = lock, interval, None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        while not self._stop.wait(self.interval):
+            try:
+                self.lock.renew()
+            except Exception as e:  # noqa: BLE001
+                self.error = e
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join()
+        return False
 
 
 def delete_messages_after(repo: DynamoDBSessionRepository, session_id: str, agent_id: str, last_kept: int | None):

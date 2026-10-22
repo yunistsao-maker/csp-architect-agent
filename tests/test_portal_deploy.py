@@ -70,3 +70,39 @@ def test_runtime_env_and_resource_policy():
 def test_git_lambda_env():
     env = pd.git_lambda_env(pd.load_config(), "arn:secret")
     assert env["GIT_PROVIDER"] == "gitlab" and "infra-live" in env["GIT_PROFILES"] and env["GIT_TOKEN_SECRET_ARN"] == "arn:secret"
+
+
+class FakeEC2:
+    def __init__(self, existing):
+        self.endpoints, self.created = list(existing), []
+
+    def describe_route_tables(self, Filters):
+        return {"RouteTables": [{"RouteTableId": "rtb-1"}]}
+
+    def describe_vpc_endpoints(self, Filters):
+        return {"VpcEndpoints": self.endpoints}
+
+    def create_vpc_endpoint(self, **kw):
+        eid = f"vpce-{len(self.endpoints)}"
+        self.endpoints.append({"VpcEndpointId": eid, "ServiceName": kw["ServiceName"], "VpcEndpointType": kw["VpcEndpointType"],
+                               "State": "available"})
+        self.created.append(kw)
+        return {"VpcEndpoint": {"VpcEndpointId": eid}}
+
+
+def test_runtime_endpoints_reuse_shared_ones_and_record_only_ours(monkeypatch):
+    monkeypatch.setattr(pd.time, "sleep", lambda s: None)
+    shared = [{"VpcEndpointId": "vpce-shared", "ServiceName": "com.amazonaws.us-east-1.s3", "VpcEndpointType": "Gateway",
+               "State": "available"},
+              {"VpcEndpointId": "vpce-dead", "ServiceName": "com.amazonaws.us-east-1.logs", "VpcEndpointType": "Interface",
+               "State": "deleted"}]
+    ec2, state = FakeEC2(shared), {}
+    pd.deploy_runtime_endpoints(ec2, state, "us-east-1", "vpc-1", ["subnet-a"], "sg-1")
+    made = {(c["ServiceName"].rsplit(".", 1)[-1], c["VpcEndpointType"]) for c in ec2.created}
+    assert made == {("bedrock-runtime", "Interface"), ("logs", "Interface"), ("secretsmanager", "Interface"),
+                    ("dynamodb", "Gateway"), ("s3", "Interface")}
+    assert "vpce-shared" not in state["created_endpoints"].values() and len(state["created_endpoints"]) == 5
+    s3if = next(c for c in ec2.created if c["ServiceName"].endswith(".s3"))
+    assert s3if["DnsOptions"] == {"PrivateDnsOnlyForInboundResolverEndpoint": True}
+    pd.deploy_runtime_endpoints(ec2, state, "us-east-1", "vpc-1", ["subnet-a"], "sg-1")  # re-run: nothing new
+    assert len(ec2.created) == 5

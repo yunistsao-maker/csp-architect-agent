@@ -29,8 +29,14 @@ The editable source is [architecture/portal-agents-architecture.drawio](architec
   portal can show these and send the answers as the next turn in the same session.
 - **Terraform is checked here, proven in CI.** `terraform_checks.py` parses every file (python-hcl2) and enforces
   the baseline in `templates/terraform/standards.yaml`: pinned versions, S3 backend with locking, required
-  default tags, no credentials, no 0.0.0.0/0 ingress, no IGW / NAT, encryption, IMDSv2, KMS rotation. A justified
-  exception is a visible `# tfcheck:allow TFxxx <reason>` comment. `terraform validate / plan` and human review
+  default tags, no credentials (in any file), no 0.0.0.0/0 ingress (inline, `dynamic`, `aws_security_group_rule`), no
+  IGW / NAT / public IPs (also through module inputs), encryption, IMDSv2, KMS rotation.
+  - **Code that would run in CI is refused, whatever the input says:** model output is untrusted because uploads
+    and web results can carry prompt injection. This covers `data "external"`, `data "http"`, provisioners,
+    `null_resource` / `terraform_data`, the external / null / http providers, and modules or providers from
+    sources outside the allowlists (TF015–TF017, not waivable).
+  - **A justified exception is waived for one resource** with a visible comment,
+    `# tfcheck:allow TF005 aws_security_group.alb <reason>`. `terraform validate / plan` and human review
   happen in the repository's CI on the merge request. The agent has no cloud credentials for the target accounts.
 - **Results become merge requests, not commits.** `{"action": "publish", "job_id"}` calls the `git-pr` tool (a
   Lambda target on the tools gateway, VPC-attached, reaching GitLab / GitHub Enterprise over TGW → DX):
@@ -42,8 +48,12 @@ The editable source is [architecture/portal-agents-architecture.drawio](architec
   agent can't choose where it writes.
 - **Tool ACL.** The tools-gateway interceptor allows each agent kind only its own targets (`TOOL_ACL`, built from
   `agents.yaml`): CSP architect gets web search + hook, COE / AICOE get git-pr, Terraform gets web search + git-pr.
-  The kind travels in `x-agent-kind`, set by agent code, never by the model. For IAM-level separation between
-  agents, give each agent its own tools gateway: the trade-off is more gateways to operate.
+  The kind travels in `x-agent-kind`, set by agent code, never by the model.
+  - **Known limitation:** the tools gateway authenticates the runtime role, not the kind. A compromised runtime
+    (not a prompt) could claim another kind. For IAM-level separation, give each agent its own tools gateway; the
+    trade-off is more gateways to operate.
+  - The git-pr Lambda can only be invoked by the tools gateway (resource policy `SourceArn`), since it trusts the
+    propagated headers.
 
 ## Sessions in DynamoDB
 A gateway call can land on any runtime microVM, so a multi-turn conversation (refining a draft, answering open
@@ -63,12 +73,18 @@ questions) is stored by `portal/sessions.py`, a Strands `SessionRepository` on o
   deletes them.
 - **Large items:** items over ~300 KB (long documents, image bytes in the history) are offloaded to
   `s3://<uploads bucket>/sessions/…`. That prefix has the same 90-day lifecycle rule.
-- **One job at a time:** only one job runs per session. A second request gets `session_busy`. If a microVM dies,
-  the lease frees the session within 5 minutes.
+- **One job at a time:** only one job runs per session. A second request gets `session_busy`.
+  - The lease is renewed while the job runs (async heartbeat, or a renewer thread for `"async": false`).
+  - If a microVM dies, the lease frees the session within 5 minutes.
+  - A turn is never overwritten: message writes are conditional, so a conflicting writer fails with
+    `session_conflict` instead of interleaving.
+- **Attachments are not re-sent:** they are persisted as a short note, not their bytes. Later turns stay small and
+  within Bedrock's per-request document limit. The files stay in S3 for 90 days and can be attached again.
 - **Output limit:** a `max_tokens` turn is rolled back in DynamoDB as well as in memory.
 
 ## Uploads (images, documents) in S3 for 90 days
-1. `{"action": "upload_url", "filename", "content_type", "size"}` returns a presigned PUT for
+1. `{"action": "upload_url", "filename", "content_type", "size"}` returns a presigned PUT on the regional host
+   (`<bucket>.s3.<region>.amazonaws.com`, or `UPLOAD_ENDPOINT_URL`) for
    `uploads/<alias>/<yyyy>/<mm>/<dd>/<id>/<name>`. It is valid for 5 minutes and bound to that content type and exact size.
    - Images: png, jpeg, gif, webp (≤ 3.75 MB).
    - Documents: pdf, docx, doc, xlsx, xls, csv, md, txt, html (≤ 4.5 MB). These are the Bedrock Converse limits.

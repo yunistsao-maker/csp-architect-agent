@@ -8,7 +8,10 @@ Tool `open_pull_request` {agent, job_id, title, body, files: [{path, content}]} 
   JWT, then by agent code) and x-agent-kind (set by agent code). Every agent kind has a PROFILE: which repository,
   base branch, path prefix and file types it may write. Agents never choose the repository.
 - Branch agent/<kind>/<alias>/<job>; the PR records who asked; merging stays with humans and the repository's CI.
-- Idempotent: publishing the same job again returns the open PR for its branch.
+- Idempotent: publishing the same job again returns the open PR for its branch, and a retry after a half-finished
+  attempt (branch pushed, PR not opened) only opens the PR.
+- Only the tools gateway may invoke this function (resource policy with SourceArn = that gateway), because the
+  caller identity comes from the invocation's client context.
 
 Environment:
   GIT_PROVIDER=gitlab|github   GIT_API_URL=https://gitlab.corp.example/api/v4 | https://ghe.corp.example/api/v3
@@ -116,6 +119,13 @@ def gitlab_pr(http: Http, repo: str, base: str, branch: str, files: list[dict], 
     _, existing = http("GET", f"/projects/{pid}/merge_requests?state=opened&source_branch={urllib.parse.quote(branch)}")
     if existing:
         return {"url": existing[0]["web_url"], "number": existing[0]["iid"], "branch": branch, "existing": True}
+    # A previous attempt may have pushed the branch and then failed to open the MR: open the MR only.
+    status, _ = http("GET", f"/projects/{pid}/repository/branches/{urllib.parse.quote(branch, safe='')}", ok=(200, 404))
+    if status == 200:
+        _, mr = http("POST", f"/projects/{pid}/merge_requests",
+                     {"source_branch": branch, "target_branch": base, "title": title, "description": body,
+                      "labels": ",".join(labels), "remove_source_branch": True})
+        return {"url": mr["web_url"], "number": mr["iid"], "branch": branch, "resumed": True}
     actions = []
     for f in files:
         fp = urllib.parse.quote(f["path"], safe="")
@@ -136,13 +146,15 @@ def github_pr(http: Http, repo: str, base: str, branch: str, files: list[dict], 
     _, existing = http("GET", f"/repos/{repo}/pulls?state=open&head={urllib.parse.quote(f'{owner}:{branch}')}")
     if existing:
         return {"url": existing[0]["html_url"], "number": existing[0]["number"], "branch": branch, "existing": True}
-    _, ref = http("GET", f"/repos/{repo}/git/ref/heads/{urllib.parse.quote(base)}")
-    base_sha = ref["object"]["sha"]
-    _, tree = http("POST", f"/repos/{repo}/git/trees", {"base_tree": base_sha, "tree": [
-        {"path": f["path"], "mode": "100644", "type": "blob", "content": f["content"]} for f in files]})
-    _, commit = http("POST", f"/repos/{repo}/git/commits",
-                     {"message": message, "tree": tree["sha"], "parents": [base_sha]})
-    http("POST", f"/repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
+    status, _ = http("GET", f"/repos/{repo}/git/ref/heads/{urllib.parse.quote(branch)}", ok=(200, 404))
+    if status != 200:  # else: a previous attempt pushed the branch but failed to open the PR
+        _, ref = http("GET", f"/repos/{repo}/git/ref/heads/{urllib.parse.quote(base)}")
+        base_sha = ref["object"]["sha"]
+        _, tree = http("POST", f"/repos/{repo}/git/trees", {"base_tree": base_sha, "tree": [
+            {"path": f["path"], "mode": "100644", "type": "blob", "content": f["content"]} for f in files]})
+        _, commit = http("POST", f"/repos/{repo}/git/commits",
+                         {"message": message, "tree": tree["sha"], "parents": [base_sha]})
+        http("POST", f"/repos/{repo}/git/refs", {"ref": f"refs/heads/{branch}", "sha": commit["sha"]})
     _, pr = http("POST", f"/repos/{repo}/pulls", {"title": title, "head": branch, "base": base, "body": body})
     if labels:
         http("POST", f"/repos/{repo}/issues/{pr['number']}/labels", {"labels": labels})

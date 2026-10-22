@@ -142,3 +142,16 @@ def test_coe_entrypoint_multi_turn_session_end_to_end(aws, monkeypatch):
     assert out1["status"] == out2["status"] == "SUCCEEDED" and "月成本 8000 USD" in out2["document"]
     msgs = [i for i in aws["table"].scan()["Items"] if i["SK"].startswith("MSG#coe#")]
     assert len(msgs) == 4  # user, assistant, user, assistant persisted for the next turn / microVM
+
+
+@pytest.mark.parametrize("bad", [
+    {"verdict": "revise", "checklist": "all good", "findings": []},
+    {"verdict": "revise", "checklist": [["GOV-01", "pass"]], "findings": [None]},
+    {"verdict": "revise", "checklist": [{"id": ["GOV-01"], "status": "pass"}],
+     "findings": [{"id": "F1", "severity": "critical", "checklist_id": "OTHER", "recommendation": "x"}]},
+])
+def test_malformed_reviews_fail_validation_instead_of_crashing(monkeypatch, bad):
+    model = ScriptedModel([{"text": f"<review>{json.dumps(bad)}</review>"}] * 2)
+    monkeypatch.setattr(doc_agent, "BedrockModel", lambda **kw: model)
+    out = doc_agent.run("coe", {"prompt": "x", "mode": "review", "doc_type": "exception-request", "document": "d"}, rc())
+    assert out["checks"]["ok"] is False and out["publishable"] is False and out["files"] == {}

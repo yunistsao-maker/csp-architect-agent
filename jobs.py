@@ -102,6 +102,7 @@ class Heartbeat:
 
     def __init__(self, store, record: dict, interval: float, on_beat=None):
         self.store, self.record, self.interval, self.on_beat = store, record, interval, on_beat
+        self.error: Exception | None = None
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -109,10 +110,13 @@ class Heartbeat:
         while not self._stop.wait(self.interval):
             try:
                 self.store.put({**self.record, "heartbeat_at": now()})
-                if self.on_beat:
-                    self.on_beat()  # e.g. renew the session lock lease
             except Exception:  # noqa: BLE001 - a missed beat only matters if every beat fails
                 pass
+            if self.on_beat:
+                try:
+                    self.on_beat()  # e.g. renew the session lock lease
+                except Exception as e:  # noqa: BLE001 - remembered; the job decides what it means
+                    self.error = e
 
     def __enter__(self):
         self._thread.start()
@@ -120,5 +124,6 @@ class Heartbeat:
 
     def __exit__(self, *exc):
         self._stop.set()
-        self._thread.join(timeout=5)
+        # Wait for an in-flight beat: a RUNNING put that lands after the final status would undo it.
+        self._thread.join()
         return False

