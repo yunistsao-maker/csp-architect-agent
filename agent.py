@@ -65,6 +65,11 @@ JOB_POLL_HINT_SECONDS = int(os.environ.get("JOB_POLL_HINT_SECONDS", "15"))
 # Adaptive thinking counts toward max_tokens: at 64k, mid-size diagrams (e.g. a private LLM platform) ran out before the
 # XML was complete. 128k is the Sonnet 5.5 output maximum (BedrockModel streams, so no HTTP timeout).
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "128000"))
+# Effort sets how long the model thinks before drawing (low | medium | high | xhigh | max); at the model default (high)
+# mid-size diagrams ran 15+ minutes. "summarized" streams thinking as it happens: with the default ("omitted") Bedrock
+# sends nothing while the model thinks, and a long think tripped the 900 s read timeout.
+EFFORT = os.environ.get("EFFORT", "medium")
+THINKING_DISPLAY = os.environ.get("THINKING_DISPLAY", "summarized")
 # Extra model turns allowed to repair a diagram that fails validation after auto-fix (0 disables).
 MAX_REPAIR_TURNS = int(os.environ.get("MAX_REPAIR_TURNS", "1"))
 # Default for the "skills" payload flag: load Agent Skills on demand instead of the per-mode system prompt.
@@ -229,6 +234,8 @@ def get_agent(session_id: str | None, mode: str, language: str | None, enable_se
             model_id=MODEL_ID,
             region_name=REGION,
             max_tokens=MAX_TOKENS,
+            additional_request_fields={"output_config": {"effort": EFFORT},
+                                       "thinking": {"type": "adaptive", "display": THINKING_DISPLAY}},
             boto_client_config=Config(read_timeout=900, retries={"max_attempts": 3, "mode": "adaptive"}),
         ),
         system_prompt=build_system_prompt(mode, language, enable_search, use_skills),
