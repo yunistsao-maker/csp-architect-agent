@@ -35,7 +35,7 @@ The editable source is [architecture/portal-agents-architecture.drawio](architec
   attached file the agent turns into items. The form and the project material go in the system prompt, so a
   long session keeps only the conversation; follow-up turns return only the items they change.
 - **Terraform is checked here, proven in CI.** `terraform_checks.py` parses every file (python-hcl2) and enforces
-  the baseline in `templates/terraform/standards.yaml`: pinned versions, S3 backend with locking, required
+  the baseline in `templates/iac/standards.yaml`: pinned versions, S3 backend with locking, required
   default tags, no credentials (in any file), no 0.0.0.0/0 ingress (inline, `dynamic`, `aws_security_group_rule`), no
   IGW / NAT / public IPs (also through module inputs), encryption, IMDSv2, KMS rotation.
   - **Code that would run in CI is refused, whatever the input says:** model output is untrusted because uploads
