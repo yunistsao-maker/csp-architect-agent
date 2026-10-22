@@ -62,8 +62,9 @@ JOB_BUCKET = os.environ.get("JOB_BUCKET")
 JOB_HEARTBEAT_SECONDS = float(os.environ.get("JOB_HEARTBEAT_SECONDS", "60"))
 JOB_STALE_SECONDS = float(os.environ.get("JOB_STALE_SECONDS", "300"))
 JOB_POLL_HINT_SECONDS = int(os.environ.get("JOB_POLL_HINT_SECONDS", "15"))
-# Large diagrams (e.g. full MLOps platforms) plus adaptive thinking exceed 32k output tokens.
-MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "64000"))
+# Adaptive thinking counts toward max_tokens: at 64k, mid-size diagrams (e.g. a private LLM platform) ran out before the
+# XML was complete. 128k is the Sonnet 5.5 output maximum (BedrockModel streams, so no HTTP timeout).
+MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "128000"))
 # Extra model turns allowed to repair a diagram that fails validation after auto-fix (0 disables).
 MAX_REPAIR_TURNS = int(os.environ.get("MAX_REPAIR_TURNS", "1"))
 # Default for the "skills" payload flag: load Agent Skills on demand instead of the per-mode system prompt.
