@@ -14,6 +14,12 @@ Run where the on-prem portal would run (on-prem host over DX, or inside the VPC)
     python gateway/portal_client.py aicoe --mode review --doc-type use-case-assessment --attach proposal.docx \\
         "請依 AI CoE 檢核表審查"
 
+    # AICOE: fill in a form (attached .xlsx / .docx / .pdf, or a form JSON) from project material; follow-up turns
+    # send the filled form back (portal-out/<job>/form.json) with the user's corrections
+    python gateway/portal_client.py aicoe --mode fill --attach ai-questionnaire.xlsx --context prd.md --session pay-ai-001 \
+        "請依需求文件填寫"
+    python gateway/portal_client.py aicoe --mode fill --form portal-out/<job>/form.json --session pay-ai-001 "Q14 沒有外部夥伴"
+
     # Terraform from a CSP architect job (same caller), then a PR to the infrastructure repo
     python gateway/portal_client.py terraform --architecture-job <csp job_id> --title payments-network \\
         "Implement the network layer only" --publish
@@ -91,13 +97,16 @@ def save(result: dict, out: Path) -> None:
         p = out / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-    if result.get("files"):
-        print(f"  saved {len(result['files'])} file(s) under {out}/")
+    if result.get("form"):
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "form.json").write_text(json.dumps(result["form"], ensure_ascii=False, indent=1), encoding="utf-8")
+    if result.get("files") or result.get("form"):
+        print(f"  saved {len(result.get('files') or {}) + bool(result.get('form'))} file(s) under {out}/")
 
 
 def show(result: dict) -> None:
     keep = {k: result.get(k) for k in ("status", "agent", "job_id", "session_id", "mode", "doc_type", "verdict",
-                                        "publishable", "open_questions", "caller", "error", "error_code")
+                                        "publishable", "open_questions", "counts", "updated", "ask", "caller", "error", "error_code")
             if result.get(k) is not None}
     print(json.dumps(keep, ensure_ascii=False, indent=1))
     checks = result.get("checks") or {}
@@ -144,9 +153,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("command", help="coe | aicoe | terraform | publish | checks")
     ap.add_argument("rest", nargs="*", help="prompt (or agent name for publish / checks)")
-    ap.add_argument("--mode", choices=["prepare", "review"], default="prepare")
+    ap.add_argument("--mode", choices=["prepare", "review", "fill"], default="prepare")
     ap.add_argument("--doc-type")
     ap.add_argument("--document", type=Path, help="review mode: Markdown / text file to review inline")
+    ap.add_argument("--form", type=Path, help="fill mode: form JSON ({\"items\": [...]}) instead of an attached form file")
+    ap.add_argument("--context", type=Path, help="fill mode: text file with the project material to answer from")
     ap.add_argument("--attach", type=Path, action="append", default=[], help="image or document to upload (repeatable)")
     ap.add_argument("--session", help="session_id: keep a multi-turn conversation (stored in DynamoDB, 90 days)")
     ap.add_argument("--title")
@@ -172,7 +183,13 @@ def main():
         sys.exit(f"unknown agent {args.command}; use {', '.join(AGENTS)}")
     url = url_for(state, args.command)
     payload = {"prompt": " ".join(args.rest) or "Please prepare the document from the attached material."}
-    if args.command in ("coe", "aicoe"):
+    if args.command in ("coe", "aicoe") and args.mode == "fill":
+        payload["mode"] = "fill"
+        if args.form:
+            payload["form"] = json.loads(args.form.read_text(encoding="utf-8"))
+        if args.context:
+            payload["context"] = args.context.read_text(encoding="utf-8")
+    elif args.command in ("coe", "aicoe"):
         payload.update(mode=args.mode, doc_type=args.doc_type or ("solution-design" if args.command == "coe"
                                                                    else "use-case-assessment"))
         if args.document:
