@@ -5,7 +5,7 @@ catch what must never reach that MR. The model output is untrusted (prompt injec
 web search), so anything that would execute code or pull code during `terraform plan` in CI is refused outright:
 `data "external"`, provisioners, `data "http"`, the external / null / http providers, and modules or providers
 from sources that aren't allowlisted. On top of that come the organisation's baseline rules for strictly private
-networks (templates/terraform/standards.yaml).
+networks (templates/iac/standards.yaml).
 
 A finding can be waived for ONE resource, with a reason that reviewers see in the merge request:
     # tfcheck:allow TF005 aws_security_group.alb public ALB for the customer website, approved in EXC-2026-014
@@ -20,7 +20,7 @@ from pathlib import Path
 import hcl2
 import yaml
 
-STANDARDS = Path(__file__).resolve().parent / "templates" / "terraform" / "standards.yaml"
+STANDARDS = Path(__file__).resolve().parent / "templates" / "iac" / "standards.yaml"
 ALLOW_RE = re.compile(r"#\s*tfcheck:allow\s+(TF\d{3})\s+([\w.\-\[\]\"]+)\s+(\S.{4,})")
 SECRET_RES = [re.compile(p) for p in (r"AKIA[0-9A-Z]{16}", r"(?i)aws_secret_access_key\s*[=:]",
                                       r"-----BEGIN [A-Z ]*PRIVATE KEY-----")]
