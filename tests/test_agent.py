@@ -54,7 +54,8 @@ def agent(monkeypatch):
 
 # ---------- payload validation ----------
 def test_missing_prompt(agent):
-    assert agent.invoke({}) == {"error": "Missing 'prompt' in payload"}
+    out = agent.invoke({})
+    assert out["error"] == "Missing 'prompt' in payload" and out["error_code"] == "bad_request" and out["api_version"]
 
 
 def test_invalid_mode(agent):

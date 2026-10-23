@@ -104,6 +104,8 @@ questions) is stored by `portal/sessions.py`, a Strands `SessionRepository` on o
 4. Lifecycle rule: `uploads/` and `sessions/` expire after 90 days (`retention` in `gateway/agents.yaml`).
 
 ## API (all agents)
+The versioned contract is [contract/](../contract/README.md): JSON Schema for every request and response, examples,
+and the compatibility rules. Send `"api_version": "1"` and a `trace_id` to follow a request through the logs.
 ```jsonc
 {"prompt": "...", "mode": "prepare|review", "doc_type": "solution-design", "title": "payments-gateway",
  "attachments": ["uploads/yhtsao/..."], "session_id": "pay-2026-001"}     // -> {"job_id", "status": "RUNNING"}

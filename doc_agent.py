@@ -285,6 +285,7 @@ def run(domain: str, payload: dict, ctx: RunContext) -> dict:
             questions = json.loads(m.group(1)) if m else []
         except json.JSONDecodeError:
             questions = [q.strip("-• ").strip() for q in m.group(1).splitlines() if q.strip()]
+        questions = [str(q) for q in questions] if isinstance(questions, list) else [str(questions)]
         title = payload.get("title") or (re.search(r"^#\s+(.+)$", document, re.M) or [None, doc_type])[1]
         path = f"{cfg['output_dir']}/{doc_type}/{date}-{name}.md"
         return {**base, "title": f"[{cfg['name']}] {title}", "document": document, "open_questions": questions,
@@ -293,7 +294,8 @@ def run(domain: str, payload: dict, ctx: RunContext) -> dict:
     title = payload.get("title") or doc_type
     report = render_review(cfg, doc_type, review, title) if review and checks["ok"] else ""
     path = f"{cfg['output_dir']}/reviews/{doc_type}/{date}-{name}-review.md"
-    return {**base, "title": f"[{cfg['name']} review] {title}", "verdict": (review or {}).get("verdict"),
+    verdict = (review or {}).get("verdict")
+    return {**base, "title": f"[{cfg['name']} review] {title}", "verdict": verdict if isinstance(verdict, str) else None,
             "review": review, "report": report, "files": {path: report} if report else {},
             "summary": f"Verdict: {(review or {}).get('verdict')}; findings {checks.get('counts')}."}
 

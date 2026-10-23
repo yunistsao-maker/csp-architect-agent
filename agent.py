@@ -8,7 +8,8 @@ Payload:
       "enable_search": false,              # optional: web search via the tools gateway (TOOLS_GATEWAY_URL) or TAVILY_API_KEY
       "skills": false,                      # optional (aws/azure/gcp): load Agent Skills from skills/ instead of the
                                             # per-mode prompt; default from USE_SKILLS
-      "async": false                        # optional: submit a job and return {"job_id"} at once; default ASYNC_DEFAULT
+      "async": false,                       # optional: submit a job and return {"job_id"} at once; default ASYNC_DEFAULT
+      "api_version": "1", "trace_id": "..." # optional: see contract/README.md
     }
     Poll an async job with {"action": "status", "job_id": "..."}: status RUNNING | SUCCEEDED | FAILED | LOST, and a
     finished job carries the same fields as a synchronous response. Only the caller alias that submitted a job can
@@ -37,6 +38,8 @@ from botocore.config import Config
 from strands import Agent, AgentSkills, tool
 from strands.models import BedrockModel
 from strands.types.exceptions import MaxTokensReachedException
+
+from portal.api import check_version, event, stamp, trace_id
 
 from drawio_validator import auto_fix_icons, repair_prompt, validate
 from jobs import JOB_ID_RE, Heartbeat, MemoryJobStore, S3JobStore, new_job_id, new_record, now, public_view
@@ -369,10 +372,10 @@ def run_postprocess_hook(result: dict, mode: str, alias: str | None, session_id:
 
 def _check_request(payload: dict) -> dict | None:
     if not payload.get("prompt"):
-        return {"error": "Missing 'prompt' in payload"}
+        return {"error": "Missing 'prompt' in payload", "error_code": "bad_request"}
     mode = payload.get("mode", "aws")
     if mode not in MODES:
-        return {"error": f"Invalid mode '{mode}'. Use one of: {', '.join(MODES)}"}
+        return {"error": f"Invalid mode '{mode}'. Use one of: {', '.join(MODES)}", "error_code": "bad_request"}
     return None
 
 
@@ -395,10 +398,11 @@ def generate(payload: dict, alias: str | None, session_id: str | None) -> dict:
             "error_code": "max_tokens",
             "mode": mode,
             "caller": {"alias": alias},
+            **stamp({}, payload),
         }
     if TOOLS_GATEWAY_URL and result.get("xml"):
         result = run_postprocess_hook(result, mode, alias, session_id)
-    return {**result, "mode": mode, "skills": use_skills, "caller": {"alias": alias}}
+    return stamp({**result, "mode": mode, "skills": use_skills, "caller": {"alias": alias}}, payload)
 
 
 # ------------------------------------------------------------------------------------------- async jobs
@@ -425,11 +429,13 @@ def run_job(record: dict, payload: dict, alias: str | None) -> None:
             try:
                 result = generate(payload, alias, None)  # fresh agent: no history shared between jobs
             except Exception as e:  # noqa: BLE001 - the job record must always reach a terminal state
-                result = {"error": f"{type(e).__name__}: {e}", "error_code": "internal_error",
-                          "caller": {"alias": alias}}
+                result = stamp({"error": f"{type(e).__name__}: {e}", "error_code": "internal_error",
+                                "caller": {"alias": alias}}, payload)
         # Write the final state only after the heartbeat thread has stopped, so a late beat cannot overwrite it.
-        store.put({**record, "status": "FAILED" if result.get("error") else "SUCCEEDED", "updated_at": now(),
-                   "heartbeat_at": now(), "result": result})
+        status = "FAILED" if result.get("error") else "SUCCEEDED"
+        store.put({**record, "status": status, "updated_at": now(), "heartbeat_at": now(), "result": result})
+        event("job_finished", agent="diagram", job_id=record["job_id"], status=status, trace_id=trace_id(payload),
+              error_code=result.get("error_code"), usage=result.get("usage"))
     finally:
         app.complete_async_task(task_id)
 
@@ -438,39 +444,44 @@ def submit_job(payload: dict, alias: str | None) -> dict:
     mode = payload.get("mode", "aws")
     request = {"mode": mode, "skills": bool(payload.get("skills", USE_SKILLS)) and mode in SKILL_FOR_MODE,
                "enable_search": bool(payload.get("enable_search")), "language": payload.get("language"),
-               "prompt_chars": len(payload["prompt"])}
+               "prompt_chars": len(payload["prompt"]), "trace_id": trace_id(payload)}
     record = new_record(new_job_id(), alias, request)
     job_store().put(record)
+    event("job_started", agent="diagram", job_id=record["job_id"], alias=alias, trace_id=trace_id(payload), mode=mode)
     spawn(run_job, record, payload, alias)
-    return {"job_id": record["job_id"], "status": "RUNNING", "poll_after_s": JOB_POLL_HINT_SECONDS,
-            "mode": mode, "caller": {"alias": alias}}
+    return stamp({"job_id": record["job_id"], "status": "RUNNING", "poll_after_s": JOB_POLL_HINT_SECONDS,
+                  "mode": mode, "caller": {"alias": alias}}, payload)
 
 
 def job_status(job_id: str | None, alias: str | None) -> dict:
-    not_found = {"error": f"Job '{job_id}' not found.", "error_code": "not_found", "job_id": job_id}
+    not_found = stamp({"error": f"Job '{job_id}' not found.", "error_code": "not_found", "job_id": job_id})
     if not job_id or not JOB_ID_RE.match(job_id):
         return not_found
     record = job_store().get(job_id)
     # Only the caller who submitted the job can read it; anyone else gets the same answer as a missing job.
     if record is None or record.get("alias") != alias:
         return not_found
-    return {**public_view(record, JOB_STALE_SECONDS), "caller": {"alias": alias}}
+    view = public_view(record, JOB_STALE_SECONDS)
+    return stamp({**view, "caller": {"alias": alias}}, trace=view.get("trace_id") or (view.get("request") or {}).get("trace_id"))
 
 
 @app.entrypoint
 def invoke(payload: dict, context=None) -> dict:
     alias = caller_alias(context)
     if REQUIRE_CALLER_ALIAS and not alias:
-        return {"error": "Caller alias header missing; invoke this agent through the ingress gateway.",
-                "error_code": "forbidden"}
+        return stamp({"error": "Caller alias header missing; invoke this agent through the ingress gateway.",
+                      "error_code": "forbidden"})
+    problem = check_version(payload)
+    if problem:
+        return stamp(problem, payload)
     action = payload.get("action", "generate")
     if action == "status":
         return job_status(payload.get("job_id"), alias)
     if action != "generate":
-        return {"error": f"Invalid action '{action}'. Use 'generate' or 'status'.", "error_code": "bad_request"}
+        return stamp({"error": f"Invalid action '{action}'. Use 'generate' or 'status'.", "error_code": "bad_request"}, payload)
     problem = _check_request(payload)
     if problem:
-        return problem
+        return stamp(problem, payload)
     if bool(payload.get("async", ASYNC_DEFAULT)):
         return submit_job(payload, alias)
     session_id = getattr(context, "session_id", None) if context else None

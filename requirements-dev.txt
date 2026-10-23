@@ -5,3 +5,5 @@ pyyaml
 boto3
 python-hcl2>=8.0
 moto[s3,dynamodb,cognitoidp]>=5.0
+jsonschema>=4.23
+joserfc>=1.0   # moto's Cognito backend (tests/test_sandbox_setup.py)

@@ -58,20 +58,24 @@ def _str(v, limit: int) -> str:
     return str(v)[:limit] if v is not None else ""
 
 
+def _index(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
 def clean_item(raw: dict, *, with_answers: bool = True) -> dict:
     """One item from untrusted input (payload or model), reduced to the known fields with the right types."""
-    it = {"id": _str(raw.get("id"), 40).strip(), "q": _str(raw.get("q"), 2000).strip()}
+    it = {"id": _str(raw.get("id"), 40).strip(), "q": _str(raw.get("q"), 8000).strip()}
     t = raw.get("type")
     it["type"] = t if t in TYPES else ("single" if raw.get("options") else "text")
     for k in ("section", "guide", "detail"):
         if raw.get(k):
-            it[k] = _str(raw[k], 4000)
+            it[k] = _str(raw[k], 8000)
     if isinstance(raw.get("options"), list):
         it["options"] = [_str(o, 300) for o in raw["options"]][:50]
     if it["type"] in ("single", "multi") and not it.get("options"):
         it["type"] = "text"
     if it["type"] == "yn":
-        choices = [c for c in raw.get("choices") or [] if c in YN]
+        choices = list(dict.fromkeys(c for c in raw.get("choices") or [] if c in YN))
         it["choices"] = choices or ["Y", "N", "NA"]
     for k in ("other", "veto", "high_risk"):
         if raw.get(k):
@@ -79,7 +83,7 @@ def clean_item(raw: dict, *, with_answers: bool = True) -> dict:
     if raw.get("expect") in ("Y", "N"):
         it["expect"] = raw["expect"]
     if isinstance(raw.get("reject"), list):
-        it["reject"] = [i for i in raw["reject"] if isinstance(i, int)]
+        it["reject"] = sorted({i for i in raw["reject"] if _index(i)})
     if with_answers:
         it.update(clean_answer(it, raw))
     return it
@@ -94,14 +98,14 @@ def clean_answer(item: dict, raw: dict) -> dict:
         n = len(item.get("options") or [])
         sel = raw["selected"]
         if item["type"] == "single":
-            out["selected"] = sel if isinstance(sel, int) and 0 <= sel < n else None
+            out["selected"] = sel if _index(sel) and sel < n else None
         elif item["type"] == "multi":
             sel = sel if isinstance(sel, list) else [sel]
-            out["selected"] = sorted({i for i in sel if isinstance(i, int) and 0 <= i < n})
+            out["selected"] = sorted({i for i in sel if _index(i) and i < n})
     for k, limit in (("other_text", 2000), ("text", 8000), ("note", 4000), ("basis", 500), ("exception", 4000)):
         if k in raw:
             out[k] = _str(raw[k], limit) if raw[k] is not None else ""
-    if "confidence" in raw:
+    if "confidence" in raw and not isinstance(raw["confidence"], bool):
         try:
             out["confidence"] = max(0, min(100, int(raw["confidence"])))
         except (TypeError, ValueError):
@@ -262,6 +266,8 @@ def check_fill(data: dict | None, parse_errors: list[str], form: dict | None) ->
     if form is None:
         if not rows:
             errors.append("no items: list every item of the attached form")
+        if len(rows) > MAX_ITEMS:
+            errors.append(f"at most {MAX_ITEMS} items per form; split the form")
         for r in rows:
             if not str(r.get("q") or "").strip():
                 errors.append(f"{r['id']}: missing 'q' (the question)")
@@ -305,7 +311,7 @@ def merge(form: dict | None, data: dict) -> tuple[dict, list[str]]:
     rows = [r for r in data["items"] if isinstance(r, dict) and r.get("id") not in (None, "")]
     if form is None:
         items = [clean_item({**r, "id": str(r["id"])}) for r in rows]
-        items = [i for i in items if i["id"] and i["q"]]
+        items = [i for i in items if i["id"] and i["q"]][:MAX_ITEMS]
         return {"title": _str(data.get("title"), 300) or "form", "items": items}, [i["id"] for i in items]
     by_id = {str(r["id"]): r for r in rows}
     items, updated = [], []
@@ -372,6 +378,10 @@ def run(domain: str, cfg: dict, payload: dict, ctx: RunContext, model_cls, slug)
     if data is None:
         return {**base, "form": form, "summary": "; ".join(checks["errors"]), "ask": [], "updated": [], "files": {}}
     filled, updated = merge(form, data)
+    if not filled["items"]:  # an attached file the model could not turn into items
+        checks = {**checks, "ok": False, "errors": checks.get("errors", []) + ["no form items found in the attachments"]}
+        return {**base, "checks": checks, "publishable": False, "form": None, "summary": "No form items found in the attachments.",
+                "ask": [], "updated": [], "files": {}}
     if form is None:
         filled["name"] = slug(filled["title"], (ctx.job_id or "form")[:8])
     flags = [flag(i) for i in filled["items"]]
