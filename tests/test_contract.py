@@ -196,3 +196,9 @@ def test_errors_match_the_contract(portal_app):
         validate("error", e)
         assert e["error_code"] in KNOWN_CODES and e["api_version"] == API_VERSION
     assert errors[3]["error_code"] == errors[8]["error_code"] == "unsupported_api_version"
+
+
+def test_long_verbatim_statements_survive_cleaning():
+    long_q = "Have you ensured this service strictly complies " + "x" * 3000
+    item = form_fill.clean_item({"id": "B-12", "q": long_q, "type": "yn", "guide": "g" * 5000})
+    assert item["q"] == long_q and len(item["guide"]) == 5000

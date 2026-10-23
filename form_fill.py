@@ -64,12 +64,12 @@ def _index(v) -> bool:
 
 def clean_item(raw: dict, *, with_answers: bool = True) -> dict:
     """One item from untrusted input (payload or model), reduced to the known fields with the right types."""
-    it = {"id": _str(raw.get("id"), 40).strip(), "q": _str(raw.get("q"), 2000).strip()}
+    it = {"id": _str(raw.get("id"), 40).strip(), "q": _str(raw.get("q"), 8000).strip()}
     t = raw.get("type")
     it["type"] = t if t in TYPES else ("single" if raw.get("options") else "text")
     for k in ("section", "guide", "detail"):
         if raw.get(k):
-            it[k] = _str(raw[k], 4000)
+            it[k] = _str(raw[k], 8000)
     if isinstance(raw.get("options"), list):
         it["options"] = [_str(o, 300) for o in raw["options"]][:50]
     if it["type"] in ("single", "multi") and not it.get("options"):
