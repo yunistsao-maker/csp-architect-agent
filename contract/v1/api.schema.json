@@ -116,7 +116,7 @@
     },
     "error": {
       "type": "object",
-      "description": "Any action may answer with an error. Consumers branch on error_code; unknown codes mean a generic failure.",
+      "description": "Any action may answer with an error. Consumers branch on error_code; unknown codes mean a generic failure. A status call answers either a job view (status RUNNING / SUCCEEDED / FAILED / LOST) or an error without such a status; errors of other actions may carry extra fields (e.g. publish reports the job's status), so judge an answer by the action you called.",
       "properties": {
         "error": {
           "type": "string",
@@ -414,6 +414,14 @@
         "skills": {
           "type": "boolean",
           "description": "aws / azure / gcp: load Agent Skills instead of the per-mode prompt."
+        },
+        "session_id": {
+          "not": {},
+          "description": "Not accepted: each diagram job starts a fresh conversation; send earlier context in the prompt."
+        },
+        "attachments": {
+          "not": {},
+          "description": "Not accepted by the diagram agent yet."
         }
       }
     },
@@ -739,7 +747,10 @@
       },
       "required": [
         "mode",
+        "form",
         "summary",
+        "ask",
+        "updated",
         "checks"
       ]
     },
@@ -791,7 +802,10 @@
           "type": "string"
         },
         "open_questions": {
-          "type": "array"
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "verdict": {
           "type": [

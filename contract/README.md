@@ -18,7 +18,12 @@ Targets: `csp-architect` (diagram), `coe-doc` and `aicoe-doc` (documents and for
 **Both sides**
 - Readers ignore fields they don't know. Every object in the schema allows additional properties.
 - Errors are `{"error": "...", "error_code": "..."}` from every action. Branch on `error_code`; treat an unknown
-  code as a generic failure.
+  code as a generic failure. Judge an answer by the action you called: a status call answers a job view
+  (`status` RUNNING / SUCCEEDED / FAILED / LOST) or an error without such a status (e.g. `not_found`); other
+  actions' errors may carry extra fields such as the job's `status`.
+- Required fields are the ones consumers rely on; a runtime always sends them (`doc.fill.result.form` may be
+  `null` when nothing could be filled).
+- The diagram agent takes no `session_id` or `attachments` (each job starts fresh; put earlier context in the prompt).
 - `trace_id` (optional, `[A-Za-z0-9._:-]{1,128}`) is echoed in job records, results and the runtime's structured
   logs (`event: job_started / job_finished`).
 

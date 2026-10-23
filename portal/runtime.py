@@ -130,7 +130,7 @@ class PortalAgentApp:
     def invoke(self, payload: dict, context=None) -> dict:
         alias = self.caller_alias(context)
         if self.settings.require_alias and not alias:
-            return error("Caller alias header missing; invoke this agent through the ingress gateway.", "forbidden")
+            return stamp(error("Caller alias header missing; invoke this agent through the ingress gateway.", "forbidden"), payload)
         problem = check_version(payload)
         if problem:
             return stamp(problem, payload)
@@ -138,12 +138,13 @@ class PortalAgentApp:
         handlers = {"generate": self._generate, "status": self._status, "upload_url": self._upload_url,
                     "publish": self._publish}
         if action not in handlers:
-            return error(f"Invalid action '{action}'. Use one of: {', '.join(handlers)}.", "bad_request")
+            return stamp(error(f"Invalid action '{action}'. Use one of: {', '.join(handlers)}.", "bad_request"), payload)
         try:
-            return handlers[action](payload, alias, context)
+            out = handlers[action](payload, alias, context)
         except (UploadError, SessionError) as e:
             code = "session_busy" if isinstance(e, SessionBusy) else "bad_request"
-            return error(str(e), code)
+            out = error(str(e), code)
+        return out if out.get("trace_id") or not trace_id(payload) else stamp(out, payload)
 
     @staticmethod
     def caller_alias(context) -> str | None:
@@ -193,8 +194,8 @@ class PortalAgentApp:
                     lock.release()
         record = new_record(job_id, alias, request)
         self.job_store.put(record)
-        self.spawn(self._run_job, record, payload, alias, lock)
         event("job_started", agent=self.kind, job_id=job_id, alias=alias, trace_id=trace_id(payload), mode=payload.get("mode"))
+        self.spawn(self._run_job, record, payload, alias, lock)
         return stamp({"job_id": job_id, "status": "RUNNING", "poll_after_s": self.settings.poll_hint_seconds,
                       "agent": self.kind, "session_id": session_id, "caller": {"alias": alias}}, payload)
 

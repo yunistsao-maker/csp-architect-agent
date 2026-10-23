@@ -35,15 +35,30 @@ def test_schema_and_version():
     assert API_VERSION.split(".")[0] == "1" and "/v1/" in SCHEMA["$id"]
 
 
+def result_schema(view: dict) -> str | None:
+    """The result shape a SUCCEEDED status carries next to its job fields."""
+    if view.get("status") != "SUCCEEDED":
+        return None
+    if "xml" in view:
+        return "diagram.result"
+    if view.get("mode") == "fill":
+        return "doc.fill.result"
+    if view.get("mode") in ("prepare", "review"):
+        return "doc.prepare.result"
+    return "terraform.result"
+
+
 @pytest.mark.parametrize("ex", EXAMPLES, ids=[e["name"] for e in EXAMPLES])
 def test_examples_are_valid(ex):
     validate(ex["schema"], ex["instance"])
+    if ex["schema"] == "status" and result_schema(ex["instance"]):
+        validate(result_schema(ex["instance"]), ex["instance"])
 
 
 def test_every_message_shape_has_an_example():
     shapes = {k for k in SCHEMA["$defs"] if "." in k or k in ("error", "jobStarted", "status", "statusRequest", "uploadUrl",
                                                                  "uploadUrlRequest", "publishRequest", "published")}
-    missing = shapes - {e["schema"] for e in EXAMPLES} - {"doc.prepare.request", "doc.prepare.result"}
+    missing = shapes - {e["schema"] for e in EXAMPLES}
     assert not missing, missing
 
 
@@ -127,6 +142,39 @@ def test_diagram_matches_the_contract(monkeypatch):
     assert status["trace_id"] == "req-2"
 
 
+def test_prepare_and_review_match_the_contract(monkeypatch):
+    from test_doc_agent import doc_for, review_for, rc
+    model = ScriptedModel([{"text": "<document>\n" + doc_for("coe", "solution-design") + "\n</document><open_questions>[\"RPO?\", 4]</open_questions>"}])
+    monkeypatch.setattr(doc_agent, "BedrockModel", lambda **kw: model)
+    out = doc_agent.run("coe", {"prompt": "x", "doc_type": "solution-design"}, rc())
+    validate("doc.prepare.result", out)
+    assert out["open_questions"] == ["RPO?", "4"]
+    review = review_for("coe", "exception-request")
+    monkeypatch.setattr(doc_agent, "BedrockModel", lambda **kw: ScriptedModel([{"text": f"<review>{json.dumps(review)}</review>"}]))
+    validate("doc.prepare.result", doc_agent.run("coe", {"prompt": "x", "mode": "review", "doc_type": "exception-request", "document": "d"}, rc()))
+
+
+@pytest.mark.parametrize("raw", [
+    {"id": "a", "q": "?", "type": "yn", "choices": ["Y", "Y", "N", "maybe"], "answer": "Y", "confidence": True, "reject": [-1, True, 2]},
+    {"id": "b", "q": "?", "type": "single", "options": ["A", "B"], "selected": True, "veto": 1, "expect": "maybe"},
+    {"id": "c", "q": "?", "type": "multi", "options": ["A", "B"], "selected": [1, 1, True, -2, 9]},
+    {"id": "d", "q": "?", "type": "single", "selected": 0},
+    {"id": "e" * 60, "q": "?" * 3000, "type": "nope", "note": None, "confidence": "87"},
+])
+def test_cleaned_items_are_contract_items(raw):
+    validate("formItem", form_fill.clean_item(raw))
+
+
+def test_attached_form_without_items(monkeypatch):
+    model = ScriptedModel([{"text": "<fill>" + json.dumps({"title": "x", "summary": "s", "items": []}) + "</fill>"}] * 2)
+    monkeypatch.setattr(doc_agent, "BedrockModel", lambda **kw: model)
+    from test_form_fill import rc as fill_rc
+    doc = {"document": {"format": "pdf", "name": "f", "source": {"bytes": b"%PDF"}}}
+    out = doc_agent.run("coe", {"prompt": "fill", "mode": "fill"}, fill_rc(attachments=[doc]))
+    validate("doc.fill.result", out)
+    assert out["form"] is None and not out["publishable"]
+
+
 def test_errors_match_the_contract(portal_app):
     import aicoe_agent
     mod = portal_app(aicoe_agent)
@@ -142,6 +190,8 @@ def test_errors_match_the_contract(portal_app):
         diagram.invoke({"prompt": "x", "mode": "visio"}, CALLER),
         diagram.invoke({"prompt": "x", "api_version": "2"}, CALLER),
     ]
+    traced = mod.invoke({"action": "nope", "trace_id": "req-x"}, CALLER)
+    assert traced["trace_id"] == "req-x" and diagram.invoke({"trace_id": "req-y"}, CALLER)["trace_id"] == "req-y"
     for e in errors:
         validate("error", e)
         assert e["error_code"] in KNOWN_CODES and e["api_version"] == API_VERSION

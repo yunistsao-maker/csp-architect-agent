@@ -644,6 +644,109 @@
      "branch": "agent/terraform/0123abcd"
     }
    }
+  },
+  {
+   "schema": "doc.prepare.request",
+   "name": "prepare a document",
+   "instance": {
+    "mode": "prepare",
+    "prompt": "Payments gateway on AWS",
+    "doc_type": "solution-design",
+    "title": "payments-gateway",
+    "session_id": "pay-2026-001",
+    "async": true
+   }
+  },
+  {
+   "schema": "doc.prepare.result",
+   "name": "prepared document",
+   "instance": {
+    "mode": "prepare",
+    "doc_type": "solution-design",
+    "title": "[Cloud CoE] payments-gateway",
+    "document": "# Payments gateway\n\n## 1. 文件資訊 Document control\n...",
+    "open_questions": [
+     "RPO?"
+    ],
+    "checks": {
+     "ok": true,
+     "errors": [],
+     "missing_sections": [],
+     "optional_missing": [],
+     "repair_turns": 0
+    },
+    "publishable": true,
+    "files": {
+     "docs/coe/solution-design/2026-10-23-payments-gateway.md": "# Payments gateway\n"
+    },
+    "summary": "draft; 1 open question(s).",
+    "agent": "coe",
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c",
+    "caller": {
+     "alias": "yhtsao"
+    }
+   }
+  },
+  {
+   "schema": "doc.prepare.result",
+   "name": "review report",
+   "instance": {
+    "mode": "review",
+    "doc_type": "exception-request",
+    "title": "[Cloud CoE review] x",
+    "verdict": "revise",
+    "review": {
+     "verdict": "revise",
+     "summary": "ok",
+     "checklist": [],
+     "findings": []
+    },
+    "report": "# review\n",
+    "checks": {
+     "ok": true,
+     "errors": [],
+     "counts": {
+      "high": 1,
+      "medium": 0,
+      "low": 0
+     }
+    },
+    "publishable": true,
+    "files": {
+     "docs/coe/reviews/exception-request/2026-10-23-x-review.md": "# review\n"
+    },
+    "summary": "Verdict: revise",
+    "agent": "coe",
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c",
+    "caller": {
+     "alias": "yhtsao"
+    }
+   }
+  },
+  {
+   "schema": "error",
+   "name": "status of an unknown job",
+   "instance": {
+    "error": "Job '0123456789abcdef0123456789abcdef' not found.",
+    "error_code": "not_found",
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "api_version": "1.0.0"
+   }
+  },
+  {
+   "schema": "error",
+   "name": "publish before the job succeeded",
+   "instance": {
+    "error": "Only a finished job that produced files can be published.",
+    "error_code": "bad_request",
+    "status": "FAILED",
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c"
+   }
   }
  ]
 }
