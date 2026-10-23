@@ -14,6 +14,12 @@ API_VERSION = "1.0.0"  # = contract/VERSION; tests keep them equal
 MAJOR = API_VERSION.split(".")[0]
 TRACE_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 log = logging.getLogger("csp.api")
+if not log.handlers:  # one JSON object per line on stdout -> CloudWatch Logs
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(message)s"))
+    log.addHandler(_h)
+    log.setLevel(logging.INFO)
+    log.propagate = False
 
 
 def check_version(payload: dict) -> dict | None:
