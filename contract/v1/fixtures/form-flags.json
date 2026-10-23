@@ -1,0 +1,19 @@
+{
+  "description": "Review flag of a filled form item: veto (the request is rejected), exception (not the expected answer: needs an exception note), schedule (Y*: capable but not done, needs the completion schedule), or null. Every implementation (agent, portal backend, browser) must give these results.",
+  "cases": [
+    {"name": "expected answer", "item": {"id": "a", "q": "?", "type": "yn", "expect": "Y", "answer": "Y"}, "flag": null},
+    {"name": "not the expected answer", "item": {"id": "b", "q": "?", "type": "yn", "expect": "Y", "answer": "N"}, "flag": "exception"},
+    {"name": "Y* needs a schedule", "item": {"id": "c", "q": "?", "type": "yn", "choices": ["Y*", "Y", "N", "NA"], "expect": "Y", "answer": "Y*"}, "flag": "schedule"},
+    {"name": "NA is never an exception", "item": {"id": "d", "q": "?", "type": "yn", "expect": "Y", "answer": "NA"}, "flag": null},
+    {"name": "unanswered", "item": {"id": "e", "q": "?", "type": "yn", "expect": "Y", "answer": null}, "flag": null},
+    {"name": "no expected answer", "item": {"id": "f", "q": "?", "type": "yn", "answer": "N"}, "flag": null},
+    {"name": "veto question answered against", "item": {"id": "g", "q": "?", "type": "yn", "choices": ["Y", "N"], "expect": "N", "veto": true, "answer": "Y"}, "flag": "veto"},
+    {"name": "veto question answered as expected", "item": {"id": "h", "q": "?", "type": "yn", "choices": ["Y", "N"], "expect": "N", "veto": true, "answer": "N"}, "flag": null},
+    {"name": "veto question with Y*", "item": {"id": "i", "q": "?", "type": "yn", "choices": ["Y*", "Y", "N"], "expect": "Y", "veto": true, "answer": "Y*"}, "flag": "schedule"},
+    {"name": "single choice hits a reject option", "item": {"id": "j", "q": "?", "type": "single", "options": ["Yes", "Yes, with consent", "No"], "veto": true, "reject": [0], "selected": 0}, "flag": "veto"},
+    {"name": "single choice avoids the reject option", "item": {"id": "k", "q": "?", "type": "single", "options": ["Yes", "Yes, with consent", "No"], "veto": true, "reject": [0], "selected": 1}, "flag": null},
+    {"name": "multi choice includes a reject option", "item": {"id": "l", "q": "?", "type": "multi", "options": ["A", "B", "C"], "veto": true, "reject": [2], "selected": [1, 2]}, "flag": "veto"},
+    {"name": "reject option without veto", "item": {"id": "m", "q": "?", "type": "single", "options": ["Yes", "No"], "reject": [0], "selected": 0}, "flag": null},
+    {"name": "text item", "item": {"id": "n", "q": "?", "type": "text", "text": "anything"}, "flag": null}
+  ]
+}

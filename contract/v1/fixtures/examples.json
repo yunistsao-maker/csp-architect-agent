@@ -1,0 +1,649 @@
+{
+ "description": "One valid instance per message shape. Consumers feed these to their parsers; the provider validates them in CI.",
+ "examples": [
+  {
+   "schema": "diagram.request",
+   "name": "diagram request",
+   "instance": {
+    "prompt": "Payments gateway on AWS with Direct Connect",
+    "mode": "aws",
+    "skills": true,
+    "enable_search": false,
+    "language": "zh-TW",
+    "async": true,
+    "api_version": "1",
+    "trace_id": "req-7f3a9c"
+   }
+  },
+  {
+   "schema": "diagram.request",
+   "name": "software architecture request",
+   "instance": {
+    "prompt": "C4 containers of the payments platform",
+    "mode": "software-architecture",
+    "async": true,
+    "api_version": "1"
+   }
+  },
+  {
+   "schema": "jobStarted",
+   "name": "job started",
+   "instance": {
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "status": "RUNNING",
+    "poll_after_s": 15,
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c"
+   }
+  },
+  {
+   "schema": "statusRequest",
+   "name": "status request",
+   "instance": {
+    "action": "status",
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "api_version": "1",
+    "trace_id": "req-7f3a9c"
+   }
+  },
+  {
+   "schema": "status",
+   "name": "running",
+   "instance": {
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "created_at": 1761180000.0,
+    "updated_at": 1761180042.5,
+    "elapsed_s": 42.5,
+    "request": {
+     "agent": "diagram",
+     "trace_id": "req-7f3a9c"
+    },
+    "status": "RUNNING",
+    "api_version": "1.0.0"
+   }
+  },
+  {
+   "schema": "status",
+   "name": "diagram succeeded",
+   "instance": {
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "created_at": 1761180000.0,
+    "updated_at": 1761180042.5,
+    "elapsed_s": 42.5,
+    "request": {
+     "agent": "diagram",
+     "trace_id": "req-7f3a9c"
+    },
+    "status": "SUCCEEDED",
+    "xml": "<mxfile><diagram id=\"p1\" name=\"Payments\"><mxGraphModel><root><mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/><mxCell id=\"a\" value=\"ALB\" style=\"rounded=1;\" vertex=\"1\" parent=\"1\"><mxGeometry x=\"10\" y=\"10\" width=\"120\" height=\"60\" as=\"geometry\"/></mxCell></root></mxGraphModel></diagram></mxfile>",
+    "explanation": "## Overview\nInternal ALB in front of the service.",
+    "mode": "aws",
+    "skills": true,
+    "validation": {
+     "ok": true,
+     "errors": [],
+     "warnings": []
+    },
+    "agent": "diagram",
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c",
+    "caller": {
+     "alias": "yhtsao"
+    }
+   }
+  },
+  {
+   "schema": "diagram.result",
+   "name": "diagram result",
+   "instance": {
+    "xml": "<mxfile><diagram id=\"p1\" name=\"Payments\"><mxGraphModel><root><mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/><mxCell id=\"a\" value=\"ALB\" style=\"rounded=1;\" vertex=\"1\" parent=\"1\"><mxGeometry x=\"10\" y=\"10\" width=\"120\" height=\"60\" as=\"geometry\"/></mxCell></root></mxGraphModel></diagram></mxfile>",
+    "explanation": "## Overview\nInternal ALB in front of the service.",
+    "mode": "aws",
+    "skills": true,
+    "validation": {
+     "ok": true,
+     "errors": [],
+     "warnings": []
+    },
+    "agent": "diagram",
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c",
+    "caller": {
+     "alias": "yhtsao"
+    }
+   }
+  },
+  {
+   "schema": "diagram.result",
+   "name": "diagram agent asks a question",
+   "instance": {
+    "xml": "",
+    "explanation": "Which region should the primary site use?",
+    "mode": "aws",
+    "validation": null,
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c",
+    "caller": {
+     "alias": "yhtsao"
+    }
+   }
+  },
+  {
+   "schema": "status",
+   "name": "failed",
+   "instance": {
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "created_at": 1761180000.0,
+    "updated_at": 1761180042.5,
+    "elapsed_s": 42.5,
+    "request": {
+     "agent": "diagram",
+     "trace_id": "req-7f3a9c"
+    },
+    "status": "FAILED",
+    "error": "The diagram exceeded the model's output limit.",
+    "error_code": "max_tokens",
+    "api_version": "1.0.0"
+   }
+  },
+  {
+   "schema": "status",
+   "name": "lost",
+   "instance": {
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "created_at": 1761180000.0,
+    "updated_at": 1761180042.5,
+    "elapsed_s": 42.5,
+    "request": {
+     "agent": "diagram",
+     "trace_id": "req-7f3a9c"
+    },
+    "status": "LOST",
+    "error": "The job stopped reporting progress.",
+    "error_code": "job_lost"
+   }
+  },
+  {
+   "schema": "error",
+   "name": "bad request",
+   "instance": {
+    "error": "Missing 'prompt' in payload",
+    "error_code": "bad_request",
+    "api_version": "1.0.0"
+   }
+  },
+  {
+   "schema": "error",
+   "name": "unsupported version",
+   "instance": {
+    "error": "This runtime serves API version 1.0.0; the request asked for 2.",
+    "error_code": "unsupported_api_version",
+    "api_version": "1.0.0"
+   }
+  },
+  {
+   "schema": "doc.fill.request",
+   "name": "fill a blank form",
+   "instance": {
+    "mode": "fill",
+    "prompt": "Fill in the form from the project files.",
+    "form": {
+     "name": "golive-check",
+     "title": "Go-Live self-check",
+     "items": [
+      {
+       "id": "C-01",
+       "section": "General Rule",
+       "q": "Is MFA required outside the company?",
+       "type": "yn",
+       "choices": [
+        "Y*",
+        "Y",
+        "N",
+        "NA"
+       ],
+       "expect": "Y",
+       "guide": "Y*: give the schedule.",
+       "detail": "Reason / Remark"
+      },
+      {
+       "id": "Q8-1",
+       "section": "Sensitive data",
+       "q": "Is employee personal data used for training?",
+       "type": "single",
+       "options": [
+        "Yes",
+        "Yes, with contractually explicit consent",
+        "No"
+       ],
+       "veto": true,
+       "reject": [
+        0
+       ]
+      },
+      {
+       "id": "Q1",
+       "q": "Problem statement",
+       "type": "text"
+      }
+     ]
+    },
+    "context": "PROJECT FILES\n### prd.md\nTwo AZs, VPN to on-prem.",
+    "language": "zh-TW",
+    "session_id": "p123-ccoe-1761180000",
+    "async": true,
+    "api_version": "1",
+    "trace_id": "req-1"
+   }
+  },
+  {
+   "schema": "doc.fill.request",
+   "name": "fill an attached form",
+   "instance": {
+    "mode": "fill",
+    "prompt": "Please fill this form",
+    "attachments": [
+     "uploads/yhtsao/2026/10/23/abc/form.xlsx"
+    ],
+    "async": true
+   }
+  },
+  {
+   "schema": "doc.fill.request",
+   "name": "follow-up on a filled form",
+   "instance": {
+    "mode": "fill",
+    "prompt": "Q8-1: no employee data is used",
+    "form": {
+     "name": "golive-check",
+     "title": "Go-Live self-check",
+     "items": [
+      {
+       "id": "C-01",
+       "section": "General Rule",
+       "q": "Is MFA required outside the company?",
+       "type": "yn",
+       "choices": [
+        "Y*",
+        "Y",
+        "N",
+        "NA"
+       ],
+       "expect": "Y",
+       "guide": "Y*: give the schedule.",
+       "detail": "Reason / Remark",
+       "answer": "Y*",
+       "note": "AAD integration scheduled for 2027 Q1",
+       "confidence": 70,
+       "basis": "prd.md",
+       "exception": ""
+      },
+      {
+       "id": "Q8-1",
+       "section": "Sensitive data",
+       "q": "Is employee personal data used for training?",
+       "type": "single",
+       "options": [
+        "Yes",
+        "Yes, with contractually explicit consent",
+        "No"
+       ],
+       "veto": true,
+       "reject": [
+        0
+       ],
+       "selected": null,
+       "note": "",
+       "confidence": 20,
+       "basis": ""
+      },
+      {
+       "id": "Q1",
+       "q": "Problem statement",
+       "type": "text",
+       "text": "Automate refund support",
+       "confidence": 60,
+       "basis": "prd.md"
+      }
+     ]
+    },
+    "session_id": "p123-ccoe-1761180000",
+    "async": true
+   }
+  },
+  {
+   "schema": "doc.fill.result",
+   "name": "filled form",
+   "instance": {
+    "mode": "fill",
+    "form": {
+     "name": "golive-check",
+     "title": "Go-Live self-check",
+     "items": [
+      {
+       "id": "C-01",
+       "section": "General Rule",
+       "q": "Is MFA required outside the company?",
+       "type": "yn",
+       "choices": [
+        "Y*",
+        "Y",
+        "N",
+        "NA"
+       ],
+       "expect": "Y",
+       "guide": "Y*: give the schedule.",
+       "detail": "Reason / Remark",
+       "answer": "Y*",
+       "note": "AAD integration scheduled for 2027 Q1",
+       "confidence": 70,
+       "basis": "prd.md",
+       "exception": ""
+      },
+      {
+       "id": "Q8-1",
+       "section": "Sensitive data",
+       "q": "Is employee personal data used for training?",
+       "type": "single",
+       "options": [
+        "Yes",
+        "Yes, with contractually explicit consent",
+        "No"
+       ],
+       "veto": true,
+       "reject": [
+        0
+       ],
+       "selected": null,
+       "note": "",
+       "confidence": 20,
+       "basis": ""
+      },
+      {
+       "id": "Q1",
+       "q": "Problem statement",
+       "type": "text",
+       "text": "Automate refund support",
+       "confidence": 60,
+       "basis": "prd.md"
+      }
+     ]
+    },
+    "summary": "Filled 3 items; 1 needs your input.",
+    "ask": [
+     "Q8-1: is employee personal data used for training?"
+    ],
+    "updated": [
+     "C-01",
+     "Q1"
+    ],
+    "counts": {
+     "items": 3,
+     "answered": 2,
+     "veto": 0,
+     "exception": 0,
+     "schedule": 1
+    },
+    "checks": {
+     "ok": true,
+     "errors": [],
+     "items": 3,
+     "repair_turns": 0
+    },
+    "publishable": true,
+    "title": "[Cloud CoE form] Go-Live self-check",
+    "files": {
+     "docs/coe/forms/2026-10-23-golive-check.md": "# Cloud CoE: Go-Live self-check\n"
+    },
+    "agent": "coe",
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c",
+    "caller": {
+     "alias": "yhtsao"
+    }
+   }
+  },
+  {
+   "schema": "status",
+   "name": "fill succeeded",
+   "instance": {
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "created_at": 1761180000.0,
+    "updated_at": 1761180042.5,
+    "elapsed_s": 42.5,
+    "request": {
+     "agent": "diagram",
+     "trace_id": "req-7f3a9c"
+    },
+    "status": "SUCCEEDED",
+    "mode": "fill",
+    "form": {
+     "name": "golive-check",
+     "title": "Go-Live self-check",
+     "items": [
+      {
+       "id": "C-01",
+       "section": "General Rule",
+       "q": "Is MFA required outside the company?",
+       "type": "yn",
+       "choices": [
+        "Y*",
+        "Y",
+        "N",
+        "NA"
+       ],
+       "expect": "Y",
+       "guide": "Y*: give the schedule.",
+       "detail": "Reason / Remark",
+       "answer": "Y*",
+       "note": "AAD integration scheduled for 2027 Q1",
+       "confidence": 70,
+       "basis": "prd.md",
+       "exception": ""
+      },
+      {
+       "id": "Q8-1",
+       "section": "Sensitive data",
+       "q": "Is employee personal data used for training?",
+       "type": "single",
+       "options": [
+        "Yes",
+        "Yes, with contractually explicit consent",
+        "No"
+       ],
+       "veto": true,
+       "reject": [
+        0
+       ],
+       "selected": null,
+       "note": "",
+       "confidence": 20,
+       "basis": ""
+      },
+      {
+       "id": "Q1",
+       "q": "Problem statement",
+       "type": "text",
+       "text": "Automate refund support",
+       "confidence": 60,
+       "basis": "prd.md"
+      }
+     ]
+    },
+    "summary": "Filled 3 items; 1 needs your input.",
+    "ask": [
+     "Q8-1: is employee personal data used for training?"
+    ],
+    "updated": [
+     "C-01",
+     "Q1"
+    ],
+    "counts": {
+     "items": 3,
+     "answered": 2,
+     "veto": 0,
+     "exception": 0,
+     "schedule": 1
+    },
+    "checks": {
+     "ok": true,
+     "errors": [],
+     "items": 3,
+     "repair_turns": 0
+    },
+    "publishable": true,
+    "title": "[Cloud CoE form] Go-Live self-check",
+    "files": {
+     "docs/coe/forms/2026-10-23-golive-check.md": "# Cloud CoE: Go-Live self-check\n"
+    },
+    "agent": "coe",
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c",
+    "caller": {
+     "alias": "yhtsao"
+    }
+   }
+  },
+  {
+   "schema": "terraform.request",
+   "name": "terraform request",
+   "instance": {
+    "prompt": "Network layer only",
+    "title": "payments-network",
+    "architecture_job_id": "0123456789abcdef0123456789abcdef",
+    "async": true,
+    "api_version": "1"
+   }
+  },
+  {
+   "schema": "terraform.result",
+   "name": "terraform result",
+   "instance": {
+    "title": "[terraform] payments-network",
+    "files": {
+     "terraform/payments-network/main.tf": "resource \"aws_vpc\" \"this\" {}\n"
+    },
+    "checks": {
+     "ok": false,
+     "errors": 1,
+     "warnings": 0,
+     "waived": 0,
+     "repair_turns": 1,
+     "findings": [
+      {
+       "rule": "TF008",
+       "file": "main.tf",
+       "message": "NAT gateways are not allowed in private workload VPCs.",
+       "severity": "error",
+       "ref": "aws_nat_gateway.this"
+      }
+     ],
+     "files": [
+      "main.tf"
+     ]
+    },
+    "summary": "Created the VPC.",
+    "publishable": false,
+    "agent": "terraform",
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c",
+    "caller": {
+     "alias": "yhtsao"
+    }
+   }
+  },
+  {
+   "schema": "status",
+   "name": "terraform succeeded",
+   "instance": {
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "created_at": 1761180000.0,
+    "updated_at": 1761180042.5,
+    "elapsed_s": 42.5,
+    "request": {
+     "agent": "diagram",
+     "trace_id": "req-7f3a9c"
+    },
+    "status": "SUCCEEDED",
+    "title": "[terraform] payments-network",
+    "files": {
+     "terraform/payments-network/main.tf": "resource \"aws_vpc\" \"this\" {}\n"
+    },
+    "checks": {
+     "ok": false,
+     "errors": 1,
+     "warnings": 0,
+     "waived": 0,
+     "repair_turns": 1,
+     "findings": [
+      {
+       "rule": "TF008",
+       "file": "main.tf",
+       "message": "NAT gateways are not allowed in private workload VPCs.",
+       "severity": "error",
+       "ref": "aws_nat_gateway.this"
+      }
+     ],
+     "files": [
+      "main.tf"
+     ]
+    },
+    "summary": "Created the VPC.",
+    "publishable": false,
+    "agent": "terraform",
+    "api_version": "1.0.0",
+    "trace_id": "req-7f3a9c",
+    "caller": {
+     "alias": "yhtsao"
+    }
+   }
+  },
+  {
+   "schema": "uploadUrlRequest",
+   "name": "upload url request",
+   "instance": {
+    "action": "upload_url",
+    "filename": "form.xlsx",
+    "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "size": 18342
+   }
+  },
+  {
+   "schema": "uploadUrl",
+   "name": "upload url",
+   "instance": {
+    "key": "uploads/yhtsao/2026/10/23/abc/form.xlsx",
+    "url": "https://bucket.s3.us-east-1.amazonaws.com/uploads/yhtsao/x?X-Amz-Signature=1",
+    "method": "PUT",
+    "headers": {
+     "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+     "Content-Length": "18342"
+    },
+    "expires_in": 300,
+    "kind": "document"
+   }
+  },
+  {
+   "schema": "publishRequest",
+   "name": "publish request",
+   "instance": {
+    "action": "publish",
+    "job_id": "0123456789abcdef0123456789abcdef"
+   }
+  },
+  {
+   "schema": "published",
+   "name": "published",
+   "instance": {
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "pull_request": {
+     "url": "https://git.example/infra/pull/42",
+     "number": 42,
+     "branch": "agent/terraform/0123abcd"
+    }
+   }
+  }
+ ]
+}

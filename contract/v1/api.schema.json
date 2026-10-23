@@ -1,0 +1,954 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yunistsao-maker/csp-architect-agent/contract/v1/api.schema.json",
+  "title": "CSP architect agents API, v1",
+  "description": "Request and response bodies of POST {gateway}/{target}/invocations for the four agent runtimes. Readers must ignore fields they don't know (every object allows additional properties); writers only add optional fields within v1. See contract/README.md.",
+  "$defs": {
+    "apiVersionRequested": {
+      "type": "string",
+      "pattern": "^1(\\.[0-9]+){0,2}$",
+      "description": "Major version the caller speaks (\"1\"); a runtime that doesn't serve it answers error_code unsupported_api_version."
+    },
+    "apiVersion": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$",
+      "description": "Contract version the runtime implements."
+    },
+    "traceId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+      "description": "Caller's correlation id; echoed in results and logs."
+    },
+    "sessionId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{8,128}$"
+    },
+    "jobId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "uploadKey": {
+      "type": "string",
+      "pattern": "^uploads/[^/]+/.+",
+      "description": "Key returned by action upload_url; only the same caller alias may use it."
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "generateCommon": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "generate"
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "zh-TW, en, or a language name."
+        },
+        "session_id": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "async": {
+          "type": "boolean"
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uploadKey"
+          },
+          "maxItems": 15
+        },
+        "api_version": {
+          "$ref": "#/$defs/apiVersionRequested"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/traceId"
+        }
+      },
+      "required": [
+        "prompt"
+      ]
+    },
+    "resultCommon": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "job_id": {
+          "$ref": "#/$defs/jobId"
+        },
+        "session_id": {
+          "$ref": "#/$defs/sessionId"
+        },
+        "api_version": {
+          "$ref": "#/$defs/apiVersion"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/traceId"
+        },
+        "caller": {
+          "type": "object",
+          "properties": {
+            "alias": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "usage": {
+          "type": "object"
+        }
+      },
+      "not": {
+        "required": [
+          "error"
+        ]
+      }
+    },
+    "error": {
+      "type": "object",
+      "description": "Any action may answer with an error. Consumers branch on error_code; unknown codes mean a generic failure.",
+      "properties": {
+        "error": {
+          "type": "string",
+          "minLength": 1
+        },
+        "error_code": {
+          "type": "string",
+          "examples": [
+            "bad_request",
+            "forbidden",
+            "not_found",
+            "unsupported_api_version",
+            "session_busy",
+            "session_conflict",
+            "internal_error",
+            "max_tokens",
+            "job_lost",
+            "checks_failed",
+            "publish_failed"
+          ]
+        },
+        "api_version": {
+          "$ref": "#/$defs/apiVersion"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/traceId"
+        }
+      },
+      "required": [
+        "error",
+        "error_code"
+      ]
+    },
+    "jobStarted": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/jobId"
+        },
+        "status": {
+          "const": "RUNNING"
+        },
+        "poll_after_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "api_version": {
+          "$ref": "#/$defs/apiVersion"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/traceId"
+        }
+      },
+      "required": [
+        "job_id",
+        "status"
+      ]
+    },
+    "statusRequest": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "status"
+        },
+        "job_id": {
+          "$ref": "#/$defs/jobId"
+        },
+        "api_version": {
+          "$ref": "#/$defs/apiVersionRequested"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/traceId"
+        }
+      },
+      "required": [
+        "action",
+        "job_id"
+      ]
+    },
+    "status": {
+      "type": "object",
+      "description": "SUCCEEDED and FAILED carry the job's result fields at the top level, next to these; job_id, status, created_at, updated_at, elapsed_s and request are reserved and never used by results.",
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/jobId"
+        },
+        "status": {
+          "enum": [
+            "RUNNING",
+            "SUCCEEDED",
+            "FAILED",
+            "LOST"
+          ]
+        },
+        "created_at": {
+          "type": "number"
+        },
+        "updated_at": {
+          "type": "number"
+        },
+        "elapsed_s": {
+          "type": "number"
+        },
+        "poll_after_s": {
+          "type": "number"
+        },
+        "request": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "job_id",
+        "status"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "FAILED",
+                  "LOST"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "error",
+              "error_code"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "SUCCEEDED"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "uploadUrlRequest": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "upload_url"
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "api_version": {
+          "$ref": "#/$defs/apiVersionRequested"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/traceId"
+        }
+      },
+      "required": [
+        "action",
+        "filename",
+        "content_type",
+        "size"
+      ]
+    },
+    "uploadUrl": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/uploadKey"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "method": {
+          "const": "PUT"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "expires_in": {
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "document"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "url",
+        "method",
+        "headers"
+      ]
+    },
+    "publishRequest": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "publish"
+        },
+        "job_id": {
+          "$ref": "#/$defs/jobId"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "api_version": {
+          "$ref": "#/$defs/apiVersionRequested"
+        },
+        "trace_id": {
+          "$ref": "#/$defs/traceId"
+        }
+      },
+      "required": [
+        "action",
+        "job_id"
+      ]
+    },
+    "published": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/jobId"
+        },
+        "pull_request": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer"
+            },
+            "branch": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      "required": [
+        "pull_request"
+      ]
+    },
+    "diagram.request": {
+      "description": "target csp-architect",
+      "allOf": [
+        {
+          "$ref": "#/$defs/generateCommon"
+        }
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "aws",
+            "azure",
+            "gcp",
+            "software-architecture",
+            "business-process"
+          ],
+          "default": "aws"
+        },
+        "enable_search": {
+          "type": "boolean"
+        },
+        "skills": {
+          "type": "boolean",
+          "description": "aws / azure / gcp: load Agent Skills instead of the per-mode prompt."
+        }
+      }
+    },
+    "diagram.result": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resultCommon"
+        }
+      ],
+      "properties": {
+        "xml": {
+          "type": "string",
+          "description": "draw.io XML; empty when the agent answered with a question instead of a diagram."
+        },
+        "explanation": {
+          "type": "string",
+          "description": "Markdown."
+        },
+        "mode": {
+          "type": "string"
+        },
+        "skills": {
+          "type": "boolean"
+        },
+        "validation": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "errors": {
+              "type": "array"
+            },
+            "warnings": {
+              "type": "array"
+            }
+          }
+        }
+      },
+      "required": [
+        "xml",
+        "explanation"
+      ]
+    },
+    "formItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "section": {
+          "type": "string"
+        },
+        "q": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "enum": [
+            "yn",
+            "single",
+            "multi",
+            "text"
+          ]
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50
+        },
+        "other": {
+          "type": "boolean"
+        },
+        "guide": {
+          "type": "string",
+          "description": "Fill-in instructions; never exported with the answers."
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "Y*",
+              "Y",
+              "N",
+              "NA"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "expect": {
+          "enum": [
+            "Y",
+            "N"
+          ]
+        },
+        "veto": {
+          "type": "boolean"
+        },
+        "reject": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "high_risk": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string",
+          "description": "Label of the reason / evidence field (note)."
+        },
+        "answer": {
+          "enum": [
+            "Y*",
+            "Y",
+            "N",
+            "NA",
+            null
+          ]
+        },
+        "selected": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "other_text": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "basis": {
+          "type": "string"
+        },
+        "exception": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "q"
+      ]
+    },
+    "form": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "answers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/formItem"
+          },
+          "minItems": 1,
+          "maxItems": 300
+        }
+      },
+      "required": [
+        "items"
+      ]
+    },
+    "doc.fill.request": {
+      "description": "targets coe-doc, aicoe-doc. Needs form, or a form file in attachments. An unanswered form gets every item answered; an answered one changes only what the prompt affects.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/generateCommon"
+        }
+      ],
+      "properties": {
+        "mode": {
+          "const": "fill"
+        },
+        "form": {
+          "$ref": "#/$defs/form"
+        },
+        "context": {
+          "type": "string",
+          "description": "Project material to answer from (e.g. a PROJECT FILES block)."
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "form"
+          ]
+        },
+        {
+          "required": [
+            "attachments"
+          ],
+          "properties": {
+            "attachments": {
+              "minItems": 1
+            }
+          }
+        }
+      ]
+    },
+    "doc.fill.result": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resultCommon"
+        }
+      ],
+      "properties": {
+        "mode": {
+          "const": "fill"
+        },
+        "form": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/form"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "ask": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "updated": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "integer"
+            },
+            "answered": {
+              "type": "integer"
+            },
+            "veto": {
+              "type": "integer"
+            },
+            "exception": {
+              "type": "integer"
+            },
+            "schedule": {
+              "type": "integer"
+            }
+          }
+        },
+        "checks": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "errors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "publishable": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "files": {
+          "$ref": "#/$defs/files"
+        }
+      },
+      "required": [
+        "mode",
+        "summary",
+        "checks"
+      ]
+    },
+    "doc.prepare.request": {
+      "description": "targets coe-doc, aicoe-doc",
+      "allOf": [
+        {
+          "$ref": "#/$defs/generateCommon"
+        }
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "prepare",
+            "review"
+          ]
+        },
+        "doc_type": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "document": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "doc_type"
+      ]
+    },
+    "doc.prepare.result": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resultCommon"
+        }
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "prepare",
+            "review"
+          ]
+        },
+        "doc_type": {
+          "type": "string"
+        },
+        "document": {
+          "type": "string"
+        },
+        "open_questions": {
+          "type": "array"
+        },
+        "verdict": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "report": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "object"
+        },
+        "publishable": {
+          "type": "boolean"
+        },
+        "files": {
+          "$ref": "#/$defs/files"
+        }
+      },
+      "required": [
+        "mode",
+        "doc_type",
+        "checks"
+      ]
+    },
+    "terraform.request": {
+      "description": "target terraform",
+      "allOf": [
+        {
+          "$ref": "#/$defs/generateCommon"
+        }
+      ],
+      "properties": {
+        "title": {
+          "$ref": "#/$defs/slug"
+        },
+        "architecture_job_id": {
+          "$ref": "#/$defs/jobId"
+        }
+      }
+    },
+    "terraform.result": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resultCommon"
+        }
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "files": {
+          "$ref": "#/$defs/files"
+        },
+        "checks": {
+          "type": "object",
+          "description": "terraform_checks.py report: counts plus one finding per problem.",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "errors": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "warnings": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "waived": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "repair_turns": {
+              "type": "integer"
+            },
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "rule": {
+                    "type": "string"
+                  },
+                  "file": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "severity": {
+                    "enum": [
+                      "error",
+                      "warning",
+                      "waived"
+                    ]
+                  },
+                  "ref": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Resource or block the finding is about."
+                  }
+                },
+                "required": [
+                  "rule",
+                  "file",
+                  "message",
+                  "severity"
+                ]
+              }
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "ok",
+            "errors",
+            "findings"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "publishable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "files",
+        "checks"
+      ]
+    },
+    "files": {
+      "type": "object",
+      "description": "Repository path -> file content, for publishing.",
+      "propertyNames": {
+        "pattern": "^[^/][^\\\\]*$",
+        "not": {
+          "pattern": "(^|/)\\.\\.(/|$)"
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

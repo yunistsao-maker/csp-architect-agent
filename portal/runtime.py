@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from jobs import JOB_ID_RE, Heartbeat, MemoryJobStore, S3JobStore, new_job_id, new_record, now, public_view
+from portal.api import API_VERSION, check_version, event, stamp, trace_id
 from portal.sessions import (DynamoDBSessionRepository, LeaseRenewer, SessionBusy, SessionError, SessionLock,
                              check_session_id)
 from portal.uploads import UploadError, check_owner, create_upload, load_attachments
@@ -69,7 +70,7 @@ class RunContext:
 
 
 def error(message: str, code: str, **extra) -> dict:
-    return {"error": message, "error_code": code, **extra}
+    return {"error": message, "error_code": code, "api_version": API_VERSION, **extra}
 
 
 class PortalAgentApp:
@@ -130,6 +131,9 @@ class PortalAgentApp:
         alias = self.caller_alias(context)
         if self.settings.require_alias and not alias:
             return error("Caller alias header missing; invoke this agent through the ingress gateway.", "forbidden")
+        problem = check_version(payload)
+        if problem:
+            return stamp(problem, payload)
         action = payload.get("action", "generate")
         handlers = {"generate": self._generate, "status": self._status, "upload_url": self._upload_url,
                     "publish": self._publish}
@@ -173,7 +177,8 @@ class PortalAgentApp:
         if lock:
             lock.acquire()
         request = {"agent": self.kind, "mode": payload.get("mode"), "session_id": session_id,
-                   "attachments": len(payload.get("attachments") or []), "prompt_chars": len(payload["prompt"])}
+                   "attachments": len(payload.get("attachments") or []), "prompt_chars": len(payload["prompt"]),
+                   "trace_id": trace_id(payload)}
         if not bool(payload.get("async", self.settings.async_default)):
             try:
                 if not lock:
@@ -189,8 +194,9 @@ class PortalAgentApp:
         record = new_record(job_id, alias, request)
         self.job_store.put(record)
         self.spawn(self._run_job, record, payload, alias, lock)
-        return {"job_id": job_id, "status": "RUNNING", "poll_after_s": self.settings.poll_hint_seconds,
-                "agent": self.kind, "session_id": session_id, "caller": {"alias": alias}}
+        event("job_started", agent=self.kind, job_id=job_id, alias=alias, trace_id=trace_id(payload), mode=payload.get("mode"))
+        return stamp({"job_id": job_id, "status": "RUNNING", "poll_after_s": self.settings.poll_hint_seconds,
+                      "agent": self.kind, "session_id": session_id, "caller": {"alias": alias}}, payload)
 
     def _context(self, payload: dict, alias: str | None, job_id: str, session_id: str | None) -> RunContext:
         blocks, meta = [], []
@@ -212,7 +218,7 @@ class PortalAgentApp:
         except UploadError as e:
             return error(str(e), "bad_request", agent=self.kind)
         result = self.handler(payload, ctx)
-        out = {**result, "agent": self.kind, "job_id": job_id}
+        out = stamp({**result, "agent": self.kind, "job_id": job_id}, payload)
         if session_id:
             out["session_id"] = session_id
         if ctx.attachment_meta:
@@ -233,8 +239,11 @@ class PortalAgentApp:
             if beat.error and not result.get("error"):
                 result = error(f"Session conflict: {beat.error}", "session_conflict", agent=self.kind)
             result = {**result, "caller": {"alias": alias}}
-            self.job_store.put({**record, "status": "FAILED" if result.get("error") else "SUCCEEDED",
-                                "updated_at": now(), "heartbeat_at": now(), "result": result})
+            status = "FAILED" if result.get("error") else "SUCCEEDED"
+            self.job_store.put({**record, "status": status, "updated_at": now(), "heartbeat_at": now(),
+                                "result": stamp(result, payload)})
+            event("job_finished", agent=self.kind, job_id=record["job_id"], status=status, trace_id=trace_id(payload),
+                  error_code=result.get("error_code"), usage=result.get("usage"))
         finally:
             if lock:
                 lock.release()
@@ -251,13 +260,15 @@ class PortalAgentApp:
         record = self._owned_record(payload.get("job_id"), alias)
         if record is None:
             return error(f"Job '{payload.get('job_id')}' not found.", "not_found", job_id=payload.get("job_id"))
-        return {**public_view(record, self.settings.stale_seconds), "caller": {"alias": alias}}
+        view = public_view(record, self.settings.stale_seconds)
+        return stamp({**view, "caller": {"alias": alias}}, trace=view.get("trace_id") or (view.get("request") or {}).get("trace_id")
+                     or trace_id(payload))
 
     def _upload_url(self, payload: dict, alias: str | None, context) -> dict:
         if not self.settings.upload_bucket:
             return error("Uploads are not enabled (UPLOAD_BUCKET is not set).", "bad_request")
-        return {**create_upload(self.presign_s3, self.settings.upload_bucket, alias, payload.get("filename", ""),
-                                payload.get("content_type", ""), payload.get("size")), "caller": {"alias": alias}}
+        return stamp({**create_upload(self.presign_s3, self.settings.upload_bucket, alias, payload.get("filename", ""),
+                                      payload.get("content_type", ""), payload.get("size")), "caller": {"alias": alias}}, payload)
 
     # ------------------------------------------------------------------ publish as a pull request
     def _publish(self, payload: dict, alias: str | None, context) -> dict:
@@ -271,7 +282,7 @@ class PortalAgentApp:
             return error("Only a finished job that produced files can be published.", "bad_request",
                          status=record["status"])
         if result.get("pull_request"):  # idempotent: one job, one PR
-            return {"job_id": record["job_id"], "pull_request": result["pull_request"], "caller": {"alias": alias}}
+            return stamp({"job_id": record["job_id"], "pull_request": result["pull_request"], "caller": {"alias": alias}}, payload)
         if not (self.settings.tools_gateway_url and self.settings.git_target):
             return error("Publishing is not configured (TOOLS_GATEWAY_URL / GIT_TARGET).", "bad_request")
         if result.get("publishable") is False:
@@ -292,4 +303,4 @@ class PortalAgentApp:
         if pr.get("error"):
             return error(f"Could not open the pull request: {pr['error']}", "publish_failed")
         self.job_store.put({**record, "result": {**result, "pull_request": pr}, "updated_at": now()})
-        return {"job_id": record["job_id"], "pull_request": pr, "caller": {"alias": alias}}
+        return stamp({"job_id": record["job_id"], "pull_request": pr, "caller": {"alias": alias}}, payload)
