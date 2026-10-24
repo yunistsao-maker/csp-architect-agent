@@ -52,7 +52,7 @@ def test_blank_form_is_filled_and_only_answers_come_back(monkeypatch):
                                 "language": "zh-TW"}, rc())
     assert out["checks"]["ok"] and out["publishable"] and out["checks"]["repair_turns"] == 0
     system = model.system_prompts[0]
-    assert "Traditional Chinese" in system and "雙 AZ" in system and '"C01"' in system and "Give EVERY item a row" in system
+    assert "Traditional Chinese" in system and "雙 AZ" in system and '"C01"' in system and "give EVERY one of them a row" in system
     assert model.seen[0]["content"][0]["text"] == "開始填寫"  # the form travels in the system prompt, not the history
     items = {i["id"]: i for i in out["form"]["items"]}
     assert items["C01"]["answer"] == "Y*" and items["C01"]["guide"].startswith("Y*:") and items["C01"]["section"] == "Identity"
@@ -83,7 +83,7 @@ def test_follow_up_changes_only_the_items_the_user_named(monkeypatch):
                                   "basis": "user", "exception": ""}], "Q8-1 改為 Yes，觸發否決")])
     monkeypatch.setattr(doc_agent, "BedrockModel", lambda **kw: model)
     out = doc_agent.run("aicoe", {"prompt": "Q8-1 會用員工資料，沒有同意書", "mode": "fill", "form": current}, rc(kind="aicoe"))
-    assert "already filled in" in model.system_prompts[0] and '"selected":[1,2]' in model.system_prompts[0]
+    assert "keep them as they are" in model.system_prompts[0] and '"selected":[1,2]' in model.system_prompts[0]
     assert out["updated"] == ["Q8-1"] and out["counts"]["veto"] == 1
     items = {i["id"]: i for i in out["form"]["items"]}
     assert items["Q8-1"]["selected"] == 0 and items["C01"] == current["items"][0]
@@ -168,3 +168,22 @@ def test_fill_through_the_portal_entrypoint_with_a_session(aws, monkeypatch):
     r2 = aicoe_agent.invoke({"action": "status", "job_id": j2}, c)
     assert r2["status"] == "SUCCEEDED" and r2["updated"] == ["C02"] and r2["counts"]["exception"] == 1
     assert len(second.seen) == 1 and "上線自檢表" in second.system_prompts[0]
+
+
+def test_user_answers_are_kept_and_the_rest_filled(monkeypatch):
+    """The portal shows the blank form first; the user answers some items, then asks the agent to fill the rest."""
+    form = form_fill.normalize_form(FORM)
+    form["items"][0].update(answer="Y", note="使用者：已整合 Entra ID", basis="user", confidence=100)
+    form["items"][1].update(note="只有備註，還沒有答案", basis="user", confidence=100)  # looked at, not answered
+    rows_missing = [{"id": "Q8-1", "selected": 2, "confidence": 80, "basis": "prd.md"}]
+    rows_ok = rows_missing + [{"id": "Q9", "selected": [1], "confidence": 75, "basis": "general knowledge"},
+                              {"id": "Q1", "text": "Refund support", "confidence": 60, "basis": "prd.md"}]
+    model = ScriptedModel([fill(rows_missing), fill(rows_ok)])
+    monkeypatch.setattr(doc_agent, "BedrockModel", lambda **kw: model)
+    out = doc_agent.run("coe", {"prompt": "請依需求補齊其餘題目", "mode": "fill", "form": form}, rc())
+    feedback = model.seen[1]["content"][0]["text"]
+    assert "Q9" in feedback and "Q1" in feedback and "C01" not in feedback and "C02" not in feedback
+    items = {i["id"]: i for i in out["form"]["items"]}
+    assert items["C01"]["answer"] == "Y" and items["C01"]["basis"] == "user"  # kept
+    assert items["Q9"]["selected"] == [1] and sorted(out["updated"]) == ["Q1", "Q8-1", "Q9"]
+    assert "general knowledge" in model.system_prompts[0] and out["checks"]["ok"]
