@@ -47,5 +47,10 @@ Targets: `csp-architect` (diagram), `coe-doc` and `aicoe-doc` (documents and for
 
 ## Changelog
 
+- **1.1.0**: fill keeps the user's answers and fills every item not looked at yet on every turn (before: only on a
+  form with no answers at all), so a portal can show the blank form first and let the person answer part of it.
+  The fill agent may use general knowledge for items that don't depend on project facts (basis "general knowledge",
+  confidence 70 or lower). No message shape changed.
+
 - **1.0.0**: first published version: diagram, fill / prepare / review, Terraform, status, upload_url, publish,
   errors, `api_version`, `trace_id`.

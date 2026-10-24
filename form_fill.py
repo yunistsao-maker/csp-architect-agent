@@ -3,7 +3,9 @@
 The form comes either in the payload ("form", e.g. a portal's built-in form or the answers so far) or as an attached
 file the agent reads and turns into items first. The agent answers from the project files the portal sends
 ("context"), the attachments and the user's messages, gives every answer a confidence, and asks for what it cannot
-support. Follow-up turns send the current form back and change only the items the user's message affects.
+support. Every turn sends the current form: items nobody has looked at yet (no answer, no confidence) are filled,
+answers already there (the user's own, basis "user", or earlier turns) are kept unless the message changes them. So a
+portal can show the blank form first, let the person answer what they know, and have the agent fill the rest.
 
 Payload (on top of the portal actions in portal/runtime.py):
     {"mode": "fill", "prompt": "...", "form"?: {"name", "title", "items": [...]}, "context"?: "PROJECT FILES ...",
@@ -140,6 +142,15 @@ def answered(item: dict) -> bool:
     return any(item.get(k) not in (None, "", []) for k in ANSWER_FIELDS)
 
 
+def has_answer(item: dict) -> bool:
+    return any(item.get(k) not in (None, "", []) for k in ("answer", "selected", "text", "other_text"))
+
+
+def untouched(item: dict) -> bool:
+    """Neither answered nor looked at yet (no answer, no confidence): every turn must give it a row."""
+    return not has_answer(item) and item.get("confidence") is None
+
+
 def answer_text(it: dict) -> str:
     if it["type"] == "yn":
         return it.get("answer") or ""
@@ -178,7 +189,10 @@ def system_prompt(cfg: dict, language: str, form: dict | None, context: str) -> 
 team submits before go-live. You answer for the user's project. Write every free-text field in {language}.
 
 SOURCES: the PROJECT FILES below (architecture diagrams, explanations, requirement documents, other agents' output),
-the attached files and images, and what the user tells you in this conversation. Nothing else.
+the attached files and images, what the user tells you in this conversation, and the answers the user already put in
+the form (basis "user"). Your general knowledge (cloud services, security practice, the regulations the form names) may
+explain an answer, or answer an item that does not depend on facts about this project; then say so in the note, set
+basis "general knowledge" and confidence 70 or lower. Never present general knowledge as a fact about this project.
 
 RULES
 - Never invent facts (names, numbers, dates, approvals, vendors, regions, controls). If the sources do not support an
@@ -212,26 +226,22 @@ OUTPUT exactly:
 <fill>{"title": "<form title>", "summary": "<two sentences>", "ask": ["..."],
  "items": [{"id": "1", "section": "...", "q": "...", "type": "yn", "choices": ["Y", "N", "NA"], "guide": "...",
             "answer": "Y", "note": "...", "confidence": 85, "basis": "...", "exception": ""}]}</fill>"""
-    elif not any(answered(i) for i in form["items"]):
-        task = f"""TASK: fill in this form. Give EVERY item a row, also when you must leave the answer empty.
+    else:
+        task = f"""TASK: fill in this form for the project, using the user's latest message.
+- Items with no answer and no confidence have not been looked at yet: give EVERY one of them a row (an empty answer
+  is allowed when nothing supports one).
+- Items with an answer were answered by the user or in earlier turns: keep them as they are unless the latest
+  message changes them. Answers with basis "user" come from the user: build on them, never overwrite them on a guess.
+- Items with a confidence but no answer were tried before: fill them when the message or the sources now support it.
+- Answer the user's questions about items in "summary".
 
-FORM ({form.get('title') or form.get('name') or 'form'}; JSON items with their instructions):
+FORM ({form.get('title') or form.get('name') or 'form'}; JSON items with their instructions and current answers):
 {_form_json(form)}
 
-OUTPUT exactly (only ids and answer fields; do not repeat the questions or instructions):
+OUTPUT exactly (only ids and answer fields of the items not looked at yet and of the items you change; do not repeat
+the questions or instructions; "items": [] when there is nothing to fill or change):
 <fill>{{"summary": "<two sentences>", "ask": ["..."],
  "items": [{{"id": "...", "answer": "Y", "note": "...", "confidence": 85, "basis": "...", "exception": ""}}]}}</fill>"""
-    else:
-        task = f"""TASK: the user is reviewing the form below, which is already filled in (the current answers are in the
-items). Apply the user's latest message: answer their questions about items, and change only the items the message
-affects (and items that depend on them). Keep everything else as it is.
-
-FORM ({form.get('title') or form.get('name') or 'form'}; JSON items with their current answers):
-{_form_json(form)}
-
-OUTPUT exactly (only the changed items, with all their answer fields; "items": [] when nothing changes):
-<fill>{{"summary": "<what you changed or answered>", "ask": ["..."],
- "items": [{{"id": "...", "answer": "N", "note": "...", "confidence": 95, "basis": "user", "exception": "..."}}]}}</fill>"""
     ctx = f"\n\n{context[:MAX_CONTEXT_CHARS]}" if context else "\n\nPROJECT FILES: none were sent."
     return rules + "\n" + task + ctx
 
@@ -281,11 +291,10 @@ def check_fill(data: dict | None, parse_errors: list[str], form: dict | None) ->
         unknown = [i for i in ids if i not in items]
         if unknown:
             errors.append(f"ids not in the form: {', '.join(unknown[:10])}")
-        if not any(answered(i) for i in form["items"]):
-            missing = [i for i in items if i not in ids]
-            if missing:
-                errors.append(f"items without a row (give every item a row, empty answer allowed): {', '.join(missing[:30])}"
-                              + (" ..." if len(missing) > 30 else ""))
+        missing = [i for i, it in items.items() if untouched(it) and i not in ids]
+        if missing:
+            errors.append(f"items without a row (give every item not looked at yet a row, empty answer allowed): "
+                          f"{', '.join(missing[:30])}" + (" ..." if len(missing) > 30 else ""))
     for r in rows:
         it = items.get(str(r["id"]))
         if not it:

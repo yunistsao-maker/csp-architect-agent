@@ -11,7 +11,7 @@ import logging
 import re
 import sys
 
-API_VERSION = "1.0.0"  # = contract/VERSION; tests keep them equal
+API_VERSION = "1.1.0"  # = contract/VERSION; tests keep them equal
 MAJOR = API_VERSION.split(".")[0]
 TRACE_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 log = logging.getLogger("csp.api")

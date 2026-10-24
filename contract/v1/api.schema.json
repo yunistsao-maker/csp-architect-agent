@@ -627,7 +627,7 @@
       ]
     },
     "doc.fill.request": {
-      "description": "targets coe-doc, aicoe-doc. Needs form, or a form file in attachments. An unanswered form gets every item answered; an answered one changes only what the prompt affects.",
+      "description": "targets coe-doc, aicoe-doc. Needs form, or a form file in attachments. Items with no answer and no confidence (not looked at yet) all get answered; items that already have an answer (the user's own, basis \"user\", or earlier turns) are kept unless the prompt changes them; items tried before without an answer are filled when the prompt or sources now support it. (1.1.0; in 1.0.0 an answered form changed only what the prompt affected.)",
       "allOf": [
         {
           "$ref": "#/$defs/generateCommon"
